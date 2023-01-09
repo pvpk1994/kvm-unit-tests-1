@@ -99,15 +99,29 @@ efi_status_t setup_amd_sev_es(void)
 	}
 
 	/*
-	 * Copy UEFI's #VC IDT entry, so KVM-Unit-Tests can reuse it and does
-	 * not have to re-implement a #VC handler. Also update the #VC IDT code
-	 * segment to use KVM-Unit-Tests segments, KERNEL_CS, so that we do not
-	 * have to copy the UEFI GDT entries into KVM-Unit-Tests GDT.
+	 * Copy UEFI's #VC IDT entry, so KVM-Unit-Tests (KUT) can reuse it
+	 * and does not have to re-implement a #VC handler. This is
+	 * useful in some cases, since:
 	 *
-	 * TODO: Reusing UEFI #VC handler is a temporary workaround to simplify
-	 * the boot up process, the long-term solution is to implement a #VC
-	 * handler in kvm-unit-tests and load it, so that kvm-unit-tests does
-	 * not depend on specific UEFI #VC handler implementation.
+	 * a. It allows programmers to also test UEFI's #VC handler
+	 * functionality and run regression tests against it. A bug in
+	 * the CPUID handling has already been found due to this.
+	 * (https://edk2.groups.io/g/devel/message/97693)
+	 *
+	 * b. It avoids the need to implement any direct interaction
+	 * with CPUID table in KUT for purposes of this test, since KUT
+	 * will never RUN in an environment where it needs validated
+	 * CPUID values from the table, except for the test that
+	 * validates its contents. Since UEFI's #VC handler provides
+	 * everything needed to access all values of CPUID table via
+	 * CPUID instruction emulation, thats the code we'll never
+	 * likely have to write for KUT.
+
+	 * TODO: Currently, the EFI's #VC handler is re-used here to
+	 * simplify the boot process. In the long-run, it may be
+	 * worthwhile to implement a #VC handler in KUT, but it may
+	 * still be useful to maintain the ability to re-use EFI's #VC
+	 * handler so that code can be exercised by KUT tests as well.
 	 */
 	sidt(&idtr);
 	idt = (idt_entry_t *)idtr.base;
