@@ -20,6 +20,8 @@
 
 #define TESTDEV_IO_PORT 0xe0
 
+struct cc_blob_sev_info *snp_cc_blob;
+
 static char st1[] = "abcdefghijklmnop";
 
 static int test_sev_activation(void)
@@ -69,9 +71,30 @@ static void test_sev_es_activation(void)
 	}
 }
 
+/* Check to find if SEV-SNP's Confidential Computing Blob is present */
+static efi_status_t find_cc_blob_efi(void)
+{
+	efi_status_t status;
+
+	status = efi_get_system_config_table(EFI_CC_BLOB_GUID,
+			(void **)&snp_cc_blob);
+
+	if (status != EFI_SUCCESS)
+		return status;
+
+	if (!snp_cc_blob)
+		return EFI_NOT_FOUND;
+
+	if (snp_cc_blob->magic != CC_BLOB_SEV_HDR_MAGIC)
+		printf("WARNING: SEV-SNP CC header magic does not match.\n");
+
+	return EFI_SUCCESS;
+}
+
 static void test_sev_snp_activation(void)
 {
 	unsigned long vmpl_bits;
+	efi_status_t status;
 	struct cpuid cpuid_out;
 
 	cpuid_out = cpuid(CPUID_FN_ENCRYPT_MEM_CAPAB);
@@ -92,9 +115,15 @@ static void test_sev_snp_activation(void)
 		printf("VMPL support is NOT advertised by CPUID.\n");
 	}
 
-	if (rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK)
+	if (rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK) {
 		printf("SEV-SNP is enabled.\n");
-	else
+
+		status = find_cc_blob_efi();
+
+		printf("%s SEV-SNP CC blob is %s present.\n",
+			status == EFI_SUCCESS ? "" : "WARNING:",
+			status == EFI_SUCCESS ? "" : "NOT");
+	} else
 		printf("WARNING: SEV-SNP is not enabled.\n");
 }
 
