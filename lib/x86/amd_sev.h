@@ -35,6 +35,7 @@
 #define MSR_SEV_STATUS      0xc0010131
 #define SEV_ENABLED_MASK    0b1
 #define SEV_ES_ENABLED_MASK 0b10
+#define SEV_SNP_ENABLED_MASK		0b100
 
 bool amd_sev_enabled(void);
 efi_status_t setup_amd_sev(void);
@@ -52,8 +53,10 @@ efi_status_t setup_amd_sev(void);
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
 
 bool amd_sev_es_enabled(void);
-efi_status_t setup_amd_sev_es(void);
 void setup_ghcb_pte(pgd_t *page_table);
+
+bool amd_sev_snp_enabled(void);
+efi_status_t setup_vc_handler(void);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);

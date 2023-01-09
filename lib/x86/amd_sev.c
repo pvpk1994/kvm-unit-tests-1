@@ -88,15 +88,39 @@ bool amd_sev_es_enabled(void)
 	return sev_es_enabled;
 }
 
-efi_status_t setup_amd_sev_es(void)
+bool amd_sev_snp_enabled(void)
+{
+	static bool sev_snp_enabled;
+	static bool initialized = false;
+
+	if (!initialized) {
+		sev_snp_enabled = false;
+		initialized = true;
+
+		if (!amd_sev_es_enabled())
+			return sev_snp_enabled;
+
+		/* Test if SEV-SNP is enabled */
+		sev_snp_enabled = rdmsr(MSR_SEV_STATUS) &
+				SEV_SNP_ENABLED_MASK;
+	}
+
+	return sev_snp_enabled;
+}
+
+efi_status_t setup_vc_handler(void)
 {
 	struct descriptor_table_ptr idtr;
 	idt_entry_t *idt;
 	idt_entry_t vc_handler_idt;
 
-	if (!amd_sev_es_enabled()) {
+	/*
+	 * If AMD SEV-ES is not enabled, then SEV-SNP also is not
+	 * enabled. However, if SEV-ES is enabled but SEV-SNP is not,
+	 * then anyways one needs to setup VC handler for SEV-ES guest.
+	 */
+	if (!amd_sev_es_enabled())
 		return EFI_UNSUPPORTED;
-	}
 
 	/*
 	 * Copy UEFI's #VC IDT entry, so KVM-Unit-Tests (KUT) can reuse it
