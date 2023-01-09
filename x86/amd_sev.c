@@ -69,6 +69,35 @@ static void test_sev_es_activation(void)
 	}
 }
 
+static void test_sev_snp_activation(void)
+{
+	unsigned long vmpl_bits;
+	struct cpuid cpuid_out;
+
+	cpuid_out = cpuid(CPUID_FN_ENCRYPT_MEM_CAPAB);
+
+	if (!(cpuid_out.a & SEV_SNP_SUPPORT_MASK)) {
+		printf("SEV-SNP is not advertised by CPUID.\n");
+		return;
+	}
+	printf("SEV-SNP is advertised by CPUID.\n");
+
+	if (cpuid_out.a & VMPL_SUPPORT_MASK) {
+		printf("VMPL support is advertised by CPUID.\n");
+
+		vmpl_bits = (cpuid_out.b & VMPL_COUNT_MASK) >>
+				VMPL_COUNT_SHIFT;
+		printf("Number of VMPLs: %lu\n", vmpl_bits);
+	} else {
+		printf("VMPL support is NOT advertised by CPUID.\n");
+	}
+
+	if (rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK)
+		printf("SEV-SNP is enabled.\n");
+	else
+		printf("WARNING: SEV-SNP is not enabled.\n");
+}
+
 static void test_stringio(void)
 {
 	int st1_len = sizeof(st1) - 1;
@@ -92,6 +121,7 @@ int main(void)
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
+	test_sev_snp_activation();
 	test_stringio();
 	return report_summary();
 }
