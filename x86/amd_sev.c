@@ -33,8 +33,11 @@ static char st1[] = "abcdefghijklmnop";
 static unsigned long addr;
 
 static void snp_set_page_shared(unsigned long paddr);
+static void snp_set_page_private(unsigned long paddr);
+static void set_page_encrypted(void);
 static void set_page_decrypted(void);
 static void setup_kut_page_pte(void);
+static void setup_kut_page_private(void);
 
 static int test_sev_activation(void)
 {
@@ -341,7 +344,7 @@ static inline int pvalidate(uint64_t vaddr, bool rmp_size,
 
 	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
 		CC_SET(c)
-		: CC_OUT(c) (no_rmpupdate), "=a"(result)
+		: CC_OUT(c) (rmp_unchanged), "=a"(result)
 		: "a"(vaddr), "c"(rmp_size), "d"(validate)
 		: "memory", "cc");
 
@@ -387,8 +390,23 @@ static void __page_state_change(unsigned long paddr, enum psc_op op)
 		return;
 	}
 
+	/*
+	 * If here: PSC is successful in RMP table, validate the page
+	 * in the guest so that it is consistent with the RMP entry
+	 */
+
+	if (op == SNP_PAGE_STATE_PRIVATE &&
+		pvalidate(paddr, RMP_PG_SIZE_4K, 1)) {
+		return;
+	}
+
 	/* Restore the old GHCB MSR */
 	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+}
+
+static void snp_set_page_private(unsigned long paddr)
+{
+	__page_state_change(paddr, SNP_PAGE_STATE_PRIVATE);
 }
 
 static void snp_set_page_shared(unsigned long paddr)
@@ -411,6 +429,21 @@ static void setup_kut_page_pte(void)
 	*pte &= ~(get_amd_sev_c_bit_mask());
 }
 
+void setup_kut_page_private(void)
+{
+	pteval_t *pte;
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)addr);
+
+	if (pte == NULL) {
+		printf("WARNING: pte is null.\n");
+		assert(pte);
+	}
+
+	/* Set c-bit */
+	*pte |= get_amd_sev_c_bit_mask();
+}
+
 static void set_clr_page_flags(pteval_t set, pteval_t clr)
 {
 	if (clr & _PAGE_ENC) {
@@ -423,12 +456,22 @@ static void set_clr_page_flags(pteval_t set, pteval_t clr)
 
 	setup_kut_page_pte();
 
+	if (set & _PAGE_ENC) {
+		setup_kut_page_private();
+		snp_set_page_private(__pa(addr & PAGE_MASK));
+	}
+
 	flush_tlb();
 }
 
 void set_page_decrypted(void)
 {
 	set_clr_page_flags(0, _PAGE_ENC);
+}
+
+void set_page_encrypted(void)
+{
+	set_clr_page_flags(_PAGE_ENC, 0);
 }
 
 static void test_sev_snp_activation(void)
@@ -475,6 +518,10 @@ static void test_sev_snp_activation(void)
 		/* Perform Private <=> Shared Page state changes */
 		addr = (unsigned long)alloc_page();
 		set_page_decrypted();
+		/* Convert same page back from Shared => Private here */
+		set_page_encrypted();
+		strcpy((char *)addr, st1);
+		printf("Address content: %s\n", (char *)addr);
 
 	} else
 		printf("WARNING: SEV-SNP is not enabled.\n");
