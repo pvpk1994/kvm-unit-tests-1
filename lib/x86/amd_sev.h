@@ -18,6 +18,7 @@
 #include "desc.h"
 #include "asm/page.h"
 #include "efi.h"
+#include "processor.h"
 
 /*
  * AMD SEV Confidential computing blob structure. The structure is
@@ -78,6 +79,7 @@ efi_status_t setup_amd_sev(void);
  */
 #define SEV_ES_VC_HANDLER_VECTOR 29
 #define SVM_EXIT_CPUID  0x72ULL
+#define SVM_VMGEXIT_PSC	0x80000010
 
 /*
  * AMD Programmer's Manual Volume 2
@@ -85,10 +87,12 @@ efi_status_t setup_amd_sev(void);
  */
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
 #define VMGEXIT()		{ asm volatile("rep; vmmcall\n\r"); }
+#define VMGEXIT_PSC_MAX_ENTRY	253
 
 #define GHCB_DATA_LOW		12
 #define GHCB_MSR_INFO_MASK	(BIT_ULL(GHCB_DATA_LOW) - 1)
 #define GHCB_RESP_CODE(v)	((v) & GHCB_MSR_INFO_MASK)
+#define GHCB_DEFAULT_USAGE	0ULL
 
 /*
  * SNP Page State Change Operation
@@ -107,6 +111,7 @@ enum psc_op {
 #define RMP_PG_SIZE_4K		0
 #define PAGE_SHIFT		12
 #define GHCB_MSR_PSC_REQ	0x14
+#define GHCB_MSR_PSC_CUR_PAGE	12
 #define GHCB_MSR_PSC_REQ_GFN(gfn, op)				\
 	/* GHCBData[55:52] */					\
 	(((u64)((op) & 0xf) << 52)		|		\
@@ -153,6 +158,23 @@ typedef struct {
 
 #define GHCB_SAVE_AREA_QWORD_OFFSET(reg_field) \
 	(OFFSET_OF(ghcb_page, save_area.reg_field) / sizeof(uint64_t))
+
+/* GHCB Accessors */
+#define GHCB_BITMAP_IDX(field)			\
+	(offsetof(ghcb_save_area, field) / sizeof(int))
+
+#define DEFINE_GHCB_ACCESSORS(field)						\
+	static inline void ghcb_set_##field(ghcb_page *ghcb, uint64_t value)  	\
+	{									\
+		set_bit(GHCB_BITMAP_IDX(field),				\
+		       (uint8_t *)&ghcb->save_area.valid_bitmap);	\
+		ghcb->save_area.field = value;				\
+	}
+
+DEFINE_GHCB_ACCESSORS(sw_scratch)
+DEFINE_GHCB_ACCESSORS(sw_exit_code)
+DEFINE_GHCB_ACCESSORS(sw_exit_info1)
+DEFINE_GHCB_ACCESSORS(sw_exit_info2)
 
 typedef enum {
 	ghcb_cpl	= GHCB_SAVE_AREA_QWORD_OFFSET(cpl),
@@ -218,6 +240,34 @@ typedef union {
 	void *ghcb;
 
 } msr_sev_ghcb_reg;
+
+struct psc_hdr {
+	u16 cur_entry;
+	u16 end_entry;
+	u32 reserved;
+};
+
+struct psc_entry {
+	u64 cur_page	: 12;
+	u64 gfn		: 40;
+	u64 operation	: 4;
+	u64 pagesize	: 1;
+	u64 reserved	: 7;
+};
+
+struct snp_psc_desc {
+	struct psc_hdr hdr;
+	struct psc_entry entries[VMGEXIT_PSC_MAX_ENTRY];
+};
+
+enum es_result {
+	ES_OK,		/* All operations good */
+	ES_UNSUPPORTED,	/* Requested operation not supported */
+	ES_VMM_ERROR,	/* Unexpected state from VMM */
+	ES_DECODE_FAIL,	/* Instr decoding failed */
+	ES_EXCEPTION,	/* Instr caused exception */
+	ES_RETRY,	/* Retry instruction emulation */
+};
 
 bool amd_sev_es_enabled(void);
 void setup_ghcb_pte(pgd_t *page_table);
