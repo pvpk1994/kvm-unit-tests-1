@@ -14,9 +14,10 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
-#include "alloc.h"
+#include "vmalloc.h"
 #include "alloc_page.h"
 #include "x86/vm.h"
+#include "alloc.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -550,14 +551,26 @@ static enum es_result sev_ghcb_hv_call(ghcb_page *ghcb, uint64_t exit_code,
 	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 	printf("Protocol version: %d\n", ghcb->protocol_version);
 
+/*
+	ghcb->save_area.sw_exit_code = exit_code;
+	ghcb->save_area.sw_exit_info1 = exit_info_1;
+	ghcb->save_area.sw_exit_info2 = exit_info_2;
+*/
+/*
+	vmg_set_offset_valid(ghcb, ghcb_sw_scratch);
+	vmg_set_offset_valid(ghcb, ghcb_sw_exit_code);
+	vmg_set_offset_valid(ghcb, ghcb_sw_exit_info1);
+	vmg_set_offset_valid(ghcb, ghcb_sw_exit_info2);
+*/
+
 	ghcb_set_sw_exit_code(ghcb, exit_code);
 	ghcb_set_sw_exit_info1(ghcb, exit_info_1);
 	ghcb_set_sw_exit_info2(ghcb, exit_info_2);
 
 	wrmsr(SEV_ES_GHCB_MSR_INDEX, __pa(ghcb));
-	mem_fence();
+//	mem_fence();
 	VMGEXIT();
-	mem_fence();
+//	mem_fence();
 
 	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 	printf("%s\n", __func__);
@@ -579,8 +592,9 @@ static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
 	end_entry = data->hdr.end_entry;
 
 	while (data->hdr.cur_entry <= data->hdr.end_entry) {
-		ghcb_set_sw_scratch(ghcb, (uint64_t)__pa(data));
+		 ghcb_set_sw_scratch(ghcb, (uint64_t)__pa(data));
 
+	//	ghcb->save_area.sw_scratch = (uint64_t)__pa(data);
 		ret = sev_ghcb_hv_call(ghcb, SVM_VMGEXIT_PSC, 0, 0);
 
 		if (ret || ghcb->save_area.sw_exit_info2) {
@@ -660,7 +674,7 @@ static void __set_pages_state(struct snp_psc_desc *data, unsigned long vaddr,
 static void set_pages_state(unsigned long vaddr, unsigned int npages,
 			    int op, ghcb_page *ghcb)
 {
-	unsigned long vaddr_start = vaddr&PAGE_MASK, vaddr_end;
+	unsigned long vaddr_start = __pa(vaddr&PAGE_MASK), vaddr_end;
 	struct snp_psc_desc *desc;
 
 	desc = malloc(sizeof(*desc));
@@ -694,7 +708,7 @@ static void pvalidate_pages(unsigned long vaddr, unsigned int npages,
 	int pvalidate_result;
 
 	/* Compute the last address */
-	vaddr &= PAGE_MASK;
+	vaddr = __pa(vaddr & PAGE_MASK);
 	vaddr_end = vaddr + (npages*PAGE_SIZE);
 
 	/* Save the old GHCB MSR */
@@ -798,12 +812,13 @@ static void test_sev_snp_psc(void)
 #endif // GHCB_MSR_PSC
 
 	/* Allocate 8 pages for testing */
-	vm_pages = (unsigned long *)alloc_pages(8);
+	vm_pages = (unsigned long *)alloc_pages(3);
 
 	ghcb_page *ghcb = (ghcb_page *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
 
+	unsigned long addr = __pa((unsigned long)vm_pages);
 	/* Page State Changes - Private to Shared */
-	snp_set_memory_shared(*vm_pages, 8, ghcb);
+	snp_set_memory_shared(addr, 8, ghcb);
 }
 
 static void test_stringio(void)

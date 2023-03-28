@@ -160,8 +160,10 @@ typedef struct {
 	(OFFSET_OF(ghcb_page, save_area.reg_field) / sizeof(uint64_t))
 
 /* GHCB Accessors */
+
+
 #define GHCB_BITMAP_IDX(field)			\
-	(offsetof(ghcb_save_area, field) / sizeof(int))
+	(offsetof(ghcb_save_area, field) / sizeof(uint64_t))
 
 #define DEFINE_GHCB_ACCESSORS(field)						\
 	static inline void ghcb_set_##field(ghcb_page *ghcb, uint64_t value)  	\
@@ -175,6 +177,7 @@ DEFINE_GHCB_ACCESSORS(sw_scratch)
 DEFINE_GHCB_ACCESSORS(sw_exit_code)
 DEFINE_GHCB_ACCESSORS(sw_exit_info1)
 DEFINE_GHCB_ACCESSORS(sw_exit_info2)
+
 
 typedef enum {
 	ghcb_cpl	= GHCB_SAVE_AREA_QWORD_OFFSET(cpl),
