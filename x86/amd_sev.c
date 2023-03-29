@@ -543,13 +543,13 @@ static enum es_result sev_ghcb_hv_call(ghcb_page *ghcb, uint64_t exit_code,
 			     	       uint64_t exit_info_1, uint64_t exit_info_2)
 {
 	/* Save the old GHCB MSR */
-        phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+ //       phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
 
 	ghcb->protocol_version = 2;
 	ghcb->ghcb_usage = GHCB_DEFAULT_USAGE;
 
-	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
-	printf("Protocol version: %d\n", ghcb->protocol_version);
+//	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+//	printf("Protocol version: %d\n", ghcb->protocol_version);
 
 /*
 	ghcb->save_area.sw_exit_code = exit_code;
@@ -572,8 +572,8 @@ static enum es_result sev_ghcb_hv_call(ghcb_page *ghcb, uint64_t exit_code,
 	VMGEXIT();
 //	mem_fence();
 
-	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
-	printf("%s\n", __func__);
+//	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+//	printf("%s\n", __func__);
 	return verify_exception(ghcb);
 }
 
@@ -621,6 +621,9 @@ static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
 			ret = 1;
 			goto out;
 		}
+		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+		printf("cur_entry: %d end_entry: %d\n",
+			data->hdr.cur_entry, data->hdr.end_entry);
 	}
 
 	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
@@ -650,8 +653,8 @@ static void __set_pages_state(struct snp_psc_desc *data, unsigned long vaddr,
 
 	while (vaddr_start < vaddr_end) {
 		pfn = __pa(vaddr_start) >> PAGE_SHIFT;
-		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
-		printf("pfn: %lu\n", pfn);
+//		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+//		printf("pfn: %lu\n", pfn);
 		entries->gfn = pfn;
 		entries->operation = op;
 		hdr->end_entry = iter;
@@ -818,7 +821,7 @@ static void test_sev_snp_psc(void)
 
 	unsigned long addr = __pa((unsigned long)vm_pages);
 	/* Page State Changes - Private to Shared */
-	snp_set_memory_shared(addr, 8, ghcb);
+	snp_set_memory_shared(addr, 15, ghcb);
 }
 
 static void test_stringio(void)
