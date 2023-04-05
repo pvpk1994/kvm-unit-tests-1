@@ -765,10 +765,28 @@ static void test_sev_snp_activation(void)
 		printf("WARNING: SEV-SNP is not enabled.\n");
 }
 
+static void test_read_write(unsigned long paddr, int num_pages, int op)
+{
+	int iter;
+
+	for(iter = 0; iter < num_pages; iter++)
+	{
+		strcpy((char *)&paddr, st1);
+		if (op)
+			printf("Shared Page %d's content: %s\n", iter+1,
+			        (char *)&paddr);
+
+		else
+			printf("Private Page %d's content: %s\n", iter+1,
+			        (char *)&paddr);
+
+		paddr += PAGE_SIZE;
+	}
+}
+
 static void test_sev_snp_psc(void)
 {
 	unsigned long val, addr_shared, addr_private;
-	int iter;
 
 	/* Perform Private <=> Shared Page state changes */
 	addr = (unsigned long)alloc_page();
@@ -791,35 +809,13 @@ static void test_sev_snp_psc(void)
 	ghcb_page *ghcb = (ghcb_page *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
 
 	addr_private = addr_shared = __pa((unsigned long)vm_pages);
+
 	/* Page State Changes - Private to Shared */
 	snp_set_memory_shared(addr_shared, 4, ghcb);
-
-	/* Test all the pages and determine whether guest can read/write 
-	 * to all of them
-	 */
-	for (iter =0; iter <4; iter++)
-	{
-		strcpy((char *)&addr_shared, st1);
-		// wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
-		printf("Page %d's content: %s\n",iter+1,(char *)&addr_shared);
-
-		addr_shared += PAGE_SIZE;
-	}
+	test_read_write(addr_shared, 4, 1);
 
 	snp_set_memory_private(addr_private, 4, ghcb);
-
-	/* Test all the pages and determine whether guest can read/write 
-         * to all of them
-         */
-        for (iter =0; iter <4; iter++)
-        {
-                strcpy((char *)&addr_private, st1);
-                // wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
-                printf("Page %d's content: %s\n",iter+1,(char *)&addr_private);
-
-                addr_private += PAGE_SIZE;
-        }
-
+	test_read_write(addr_private, 4, 0);
 }
 
 static void test_stringio(void)
