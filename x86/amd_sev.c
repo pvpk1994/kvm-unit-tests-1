@@ -772,7 +772,7 @@ static void test_read_write(unsigned long paddr, int num_pages, int op)
 	for(iter = 0; iter < num_pages; iter++)
 	{
 		strcpy((char *)&paddr, st1);
-		if (op)
+		if (op == SNP_PAGE_STATE_SHARED)
 			printf("Shared Page %d's content: %s\n", iter+1,
 			        (char *)&paddr);
 
@@ -812,10 +812,10 @@ static void test_sev_snp_psc(void)
 
 	/* Page State Changes - Private to Shared */
 	snp_set_memory_shared(addr_shared, 4, ghcb);
-	test_read_write(addr_shared, 4, 1);
+	test_read_write(addr_shared, 4, SNP_PAGE_STATE_SHARED);
 
 	snp_set_memory_private(addr_private, 4, ghcb);
-	test_read_write(addr_private, 4, 0);
+	test_read_write(addr_private, 4, SNP_PAGE_STATE_PRIVATE);
 }
 
 static void test_stringio(void)
