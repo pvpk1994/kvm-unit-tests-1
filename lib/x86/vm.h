@@ -25,9 +25,13 @@ static inline bool found_leaf_pte(struct pte_search search)
 	return search.level == 1 || found_huge_pte(search);
 }
 
+struct pte_search find_pte_level_dbg(pgd_t *cr3, void *virt,
+				 int lowest_level, bool debug);
 struct pte_search find_pte_level(pgd_t *cr3, void *virt,
 				 int lowest_level);
+pteval_t *get_pte_dbg(pgd_t *cr3, void *virt, bool debug);
 pteval_t *get_pte(pgd_t *cr3, void *virt);
+pteval_t *get_pte_level_dbg(pgd_t *cr3, void *virt, int pte_level, bool debug);
 pteval_t *get_pte_level(pgd_t *cr3, void *virt, int pte_level);
 pteval_t *install_pte(pgd_t *cr3,
 		      int pte_level,

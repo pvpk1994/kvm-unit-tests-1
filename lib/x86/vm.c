@@ -41,8 +41,8 @@ pteval_t *install_pte(pgd_t *cr3,
  * Finds last PTE in the mapping of @virt that's at or above @lowest_level. The
  * returned PTE isn't necessarily present, but its parent is.
  */
-struct pte_search find_pte_level(pgd_t *cr3, void *virt,
-				 int lowest_level)
+struct pte_search find_pte_level_dbg(pgd_t *cr3, void *virt,
+				 int lowest_level, bool debug)
 {
 	pteval_t *pt = cr3, pte;
 	unsigned offset;
@@ -57,6 +57,10 @@ struct pte_search find_pte_level(pgd_t *cr3, void *virt,
 		r.pte = &pt[offset];
 		pte = *r.pte;
 
+	if (debug)
+		printf("%s: current lvl: %d (lowest: %d), page table address: %p, offset: 0x%x, pte: %llx\n",
+			   __func__, r.level, lowest_level, pt, offset, pte);
+
 		if (!(pte & PT_PRESENT_MASK))
 			return r;
 
@@ -70,16 +74,30 @@ struct pte_search find_pte_level(pgd_t *cr3, void *virt,
 	}
 }
 
+struct pte_search find_pte_level(pgd_t *cr3, void *virt,
+				 int lowest_level)
+{
+	find_pte_level_dbg(cr3, virt, lowest_level, false);
+}
+
 /*
  * Returns the leaf PTE in the mapping of @virt (i.e., 4K PTE or a present huge
  * PTE). Returns NULL if no leaf PTE exists.
  */
-pteval_t *get_pte(pgd_t *cr3, void *virt)
+pteval_t *get_pte_dbg(pgd_t *cr3, void *virt, bool debug)
 {
 	struct pte_search search;
 
-	search = find_pte_level(cr3, virt, 1);
+	if (debug)
+		printf("%s: cr3: %p, virt: %p\n", __func__, cr3, virt);
+
+	search = find_pte_level_dbg(cr3, virt, 1, debug);
 	return found_leaf_pte(search) ? search.pte : NULL;
+}
+
+pteval_t *get_pte(pgd_t *cr3, void *virt)
+{
+	return get_pte_dbg(cr3, virt, false);
 }
 
 /*
@@ -87,12 +105,20 @@ pteval_t *get_pte(pgd_t *cr3, void *virt)
  * Returns NULL if the PT at @pte_level isn't present (i.e., the mapping at
  * @pte_level - 1 isn't present).
  */
-pteval_t *get_pte_level(pgd_t *cr3, void *virt, int pte_level)
+pteval_t *get_pte_level_dbg(pgd_t *cr3, void *virt, int pte_level, bool debug)
 {
 	struct pte_search search;
 
-	search = find_pte_level(cr3, virt, pte_level);
+	if (debug)
+		printf("%s: cr3: %p, virt: %p, pte_level: %d\n", __func__, cr3, virt, pte_level);
+
+	search = find_pte_level_dbg(cr3, virt, pte_level, debug);
 	return search.level == pte_level ? search.pte : NULL;
+}
+
+pteval_t *get_pte_level(pgd_t *cr3, void *virt, int pte_level)
+{
+	return get_pte_level_dbg(cr3, virt, pte_level, false);
 }
 
 pteval_t *install_large_page(pgd_t *cr3, phys_addr_t phys, void *virt)
