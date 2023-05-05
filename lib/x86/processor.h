@@ -202,6 +202,36 @@ static inline bool is_intel(void)
 #define	CPUID(a, b, c, d) ((((unsigned long long) a) << 32) | (b << 16) | \
 			  (c << 8) | d)
 
+/* Byte Packed Structure for Control Register 4 (CR4)
+ * 32-bits on IA-32
+ * 64-bits on X-64. Upper 32-bits on X-64 are reserved
+ */
+typedef union {
+	struct {
+		u32 vme:1;		// Virtual-8086 mode ext
+		u32 pvt:1;		// Protected-Mode Virtual Interrupts
+		u32 tsd:1;		// Time Stamp Disable
+		u32 de:1;		// Debugging Extensions
+		u32 pse:1;		// Page Size Entensions
+		u32 pae:1;		// Physical Address Extensions
+		u32 mce:1;		// Machine Check Enable
+		u32 pge:1;		// Page Global Enable
+		u32 pce:1;		// Perf Monitoring Counter
+		u32 osfxsr:1;		// OS Support for FXSAVE & FXSTOR inst
+		u32 osxmmexcpt:1;	// OS Support for Unmasked SIMD Floating Point
+		u32 umip:1;		// User mode Instr Prevention
+		u32 la57:1;		// Linear Address 57 bit
+		u32 vmxe:1;		// VMX Enable
+		u32 smxe:1;		// SMX Enable
+		u32 reserved_3:1;	// Reserved
+		u32 fsgsbase:1;		// FSGS  BASE ENABLE
+		u32 pcide:1;		// PCID Enable
+		u32 osxsave:1;		// XSAVE and Processor Extended States Enable
+		u32 reserved_1:9;	// Reserved
+	} bits;
+	u64 uint64;
+} ia32_cr4;
+
 /*
  * Each X86_FEATURE_XXX definition is 64-bit and contains the following
  * CPUID meta-data:
