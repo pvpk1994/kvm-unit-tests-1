@@ -364,6 +364,8 @@ efi_status_t setup_efi(efi_bootinfo_t *efi_bootinfo)
 	reset_apic();
 	mask_pic_interrupts();
 	setup_page_table();
+	/* Setup an alternate page table creation path for proper page allocation */
+	setup_vm();
 	enable_apic();
 	save_id();
 	bsp_rest_init();

@@ -14,6 +14,7 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "alloc_page.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -25,6 +26,7 @@
 struct cc_blob_sev_info *snp_cc_blob;
 
 static char st1[] = "abcdefghijklmnop";
+static unsigned long addr;
 
 static int test_sev_activation(void)
 {
@@ -357,6 +359,14 @@ static void test_sev_snp_activation(void)
 		printf("%s SEV-SNP CC blob is %s present.\n",
 		       status == EFI_SUCCESS ? "" : "WARNING:",
 		       status == EFI_SUCCESS ? "" : "NOT");
+
+		/* Allocate a page */
+		addr = (unsigned long)alloc_page();
+		if (!addr) {
+			printf("WARNING: Page not allocated!\n");
+			assert(addr);
+		}
+		install_4k_pte((pgd_t *)read_cr3(), (phys_addr_t)addr);
 	} else
 		printf("WARNING: SEV-SNP is not enabled.\n");
 }
