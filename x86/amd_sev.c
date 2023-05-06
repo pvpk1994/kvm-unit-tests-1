@@ -15,6 +15,7 @@
 #include "x86/amd_sev.h"
 #include "msr.h"
 #include "alloc_page.h"
+#include "x86/vm.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -23,10 +24,17 @@
 
 #define CPUID_EXTENDED_STATE	0x0D
 
+#define _PAGE_ENC	(_AT(pteval_t, get_amd_sev_c_bit_mask()))
+
 struct cc_blob_sev_info *snp_cc_blob;
 
 static char st1[] = "abcdefghijklmnop";
 static unsigned long addr;
+
+static void snp_set_page_shared(unsigned long paddr);
+static void set_page_decrypted(void);
+static void unset_c_bit_pte(void);
+static void test_sev_snp_psc(void);
 
 static int test_sev_activation(void)
 {
@@ -319,6 +327,108 @@ static efi_status_t test_sev_snp_cpuid(ghcb_page *ghcb)
 	return EFI_NOT_FOUND;
 }
 
+static inline int pvalidate(u64 vaddr, bool rmp_size,
+			    bool validate)
+{
+	bool rmp_unchanged;
+	int result;
+
+	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
+		     CC_SET(c)
+		     : CC_OUT(c) (rmp_unchanged), "=a" (result)
+		     : "a" (vaddr), "c" (rmp_size), "d" (validate)
+		     : "memory", "cc");
+
+	if (rmp_unchanged)
+		return 1;
+
+	return result;
+}
+
+static void __page_state_change(unsigned long paddr, enum psc_op op)
+{
+	u64 val;
+
+	if (!(rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK))
+		return;
+
+	/* Save the old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/*
+	 * If action requested is to convert the page from private to
+	 * shared, then invalidate the page before we send it to
+	 * hypervisor to change the state of page in RMP table.
+	 */
+	if (op == SNP_PAGE_STATE_SHARED &&
+	    pvalidate(paddr, RMP_PG_SIZE_4K, 0)) {
+		/* Restore old GHCB MSR */
+		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+		printf("WARNING: pvalidate failed during private -> shared conversion.\n");
+		return;
+	}
+
+	/*
+	 * Now issue VMGEXIT to change the state of the page in RMP
+	 * table
+	 */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX,
+	      GHCB_MSR_PSC_REQ_GFN(paddr >> PAGE_SHIFT, op));
+
+	VMGEXIT();
+
+	val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/* Restore the old GHCB MSR */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+
+	if (GHCB_RESP_CODE(val) != GHCB_MSR_PSC_RESP ||
+	    GHCB_MSR_PSC_RESP_VAL(val)) {
+		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+		printf("WARNING: Failed to read Hypervisor response.\n");
+		return;
+	}
+}
+
+static void snp_set_page_shared(unsigned long paddr)
+{
+	__page_state_change(paddr, SNP_PAGE_STATE_SHARED);
+}
+
+static void unset_c_bit_pte(void)
+{
+	pteval_t *pte;
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)addr);
+
+	if (!pte) {
+		printf("WARNING: pte is null.\n");
+		assert(pte);
+	}
+
+	/* unset c-bit */
+	*pte &= ~(get_amd_sev_c_bit_mask());
+}
+
+static void clr_page_flags(pteval_t set, pteval_t clr)
+{
+	if (clr & _PAGE_ENC) {
+		/*
+		 * If the encryption bit is cleared, make the page state
+		 * entry to SHARED in RMP table.
+		 */
+		snp_set_page_shared(__pa(addr & PAGE_MASK));
+		unset_c_bit_pte();
+	}
+
+	flush_tlb();
+}
+
+void set_page_decrypted(void)
+{
+	clr_page_flags(0, _PAGE_ENC);
+}
+
 static void test_sev_snp_activation(void)
 {
 	unsigned long vmpl_bits;
@@ -359,16 +469,24 @@ static void test_sev_snp_activation(void)
 		printf("%s SEV-SNP CC blob is %s present.\n",
 		       status == EFI_SUCCESS ? "" : "WARNING:",
 		       status == EFI_SUCCESS ? "" : "NOT");
-
-		/* Allocate a page */
-		addr = (unsigned long)alloc_page();
-		if (!addr) {
-			printf("WARNING: Page not allocated!\n");
-			assert(addr);
-		}
-		install_4k_pte((pgd_t *)read_cr3(), (phys_addr_t)addr);
 	} else
 		printf("WARNING: SEV-SNP is not enabled.\n");
+}
+
+static void test_sev_snp_psc(void)
+{
+	addr = (unsigned long)alloc_page();
+
+	if (!addr) {
+		printf("WARNING: Page not allocated!\n");
+		assert(addr);
+	}
+
+	install_4k_pte((pgd_t *)read_cr3(), addr);
+	/* Perform Private <=> Shared page state change */
+	set_page_decrypted();
+	strcpy((char *)addr, st1);
+	printf("Address content: %s\n", (char *)addr);
 }
 
 static void test_stringio(void)
@@ -395,6 +513,7 @@ int main(void)
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
 	test_sev_snp_activation();
+	test_sev_snp_psc();
 	test_stringio();
 	return report_summary();
 }
