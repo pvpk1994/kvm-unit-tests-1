@@ -14,6 +14,7 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "alloc.h"
 #include "alloc_page.h"
 #include "x86/vm.h"
 
@@ -29,7 +30,9 @@
 struct cc_blob_sev_info *snp_cc_blob;
 
 static char st1[] = "abcdefghijklmnop";
+
 static unsigned long addr;
+static unsigned long *vm_pages;
 
 static void snp_set_page_shared(unsigned long paddr);
 static void snp_set_page_private(unsigned long paddr);
@@ -38,6 +41,40 @@ static void set_page_decrypted(void);
 static void unset_c_bit_pte(void);
 static void test_sev_snp_psc(void);
 static void set_c_bit_pte(void);
+static void snp_set_memory_shared(unsigned long vaddr, unsigned int npages,
+				  ghcb_page *ghcb);
+
+/* #VC handler for runtime per-CPU data */
+struct sev_es_runtime_data {
+	ghcb_page ghcb;
+
+	/*
+	 * Reserve one page per CPU as a backup storage for unencrypted
+	 * GHCB. This is needed when an NMI happens while the #VC
+	 * handler is using the primary GHCB, and the NMI handler itself
+	 * is causing another #VC exception. In such a case, the GHCB
+	 * content of the first handler needs to be backed up and
+	 * restored.
+	 */
+	ghcb_page backup_ghcb;
+
+	/*
+	 * Mark the per-CPU GHCBs as in-use to detect nested #VC exceptions.
+	 * This is necessary for example: #VC -> NMI -> #VC when NMI
+	 * happens while first #VC handler uses GHCB. When an NMI
+	 * handler raises a second #VC handler, it might overwrite the
+	 * contents of the first GHCB written by the first handler. To
+	 * avoid this potential overwrite condition, content of first
+	 * GHCB is saved and restored when GHCB is detected to be in use
+	 * already.
+	 */
+	bool ghcb_active;
+	bool backup_ghcb_active;
+};
+
+struct ghcb_state {
+	ghcb_page *ghcb;
+};
 
 static int test_sev_activation(void)
 {
@@ -471,6 +508,191 @@ void set_page_encrypted(void)
 	set_clr_page_flags(_PAGE_ENC, 0);
 }
 
+static enum es_result verify_exception(ghcb_page *ghcb)
+{
+	int ret;
+
+	ret = ghcb->save_area.sw_exit_info1 & GENMASK_ULL(31, 0);
+
+	if (!ret)
+		return ES_OK;
+
+	return ret;
+}
+
+static enum es_result sev_ghcb_hv_call(ghcb_page *ghcb, u64 exit_code,
+				       u64 exit_info_1, u64 exit_info_2)
+{
+	ghcb->protocol_version = 2;
+	ghcb->ghcb_usage = GHCB_DEFAULT_USAGE;
+
+	ghcb_set_sw_exit_code(ghcb, exit_code);
+	ghcb_set_sw_exit_info1(ghcb, exit_info_1);
+	ghcb_set_sw_exit_info2(ghcb, exit_info_2);
+
+	VMGEXIT();
+
+	return verify_exception(ghcb);
+}
+
+static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
+{
+	int cur_entry, end_entry, ret = 0;
+	struct snp_psc_desc *data;
+
+	/* Save the old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	data = (struct snp_psc_desc *)ghcb->shared_buffer;
+	memcpy(ghcb->shared_buffer, desc, sizeof(*desc));
+
+	cur_entry = data->hdr.cur_entry;
+	end_entry = data->hdr.end_entry;
+
+	while (data->hdr.cur_entry <= data->hdr.end_entry) {
+		ghcb_set_sw_scratch(ghcb, (uint64_t)__pa(data));
+
+		ret = sev_ghcb_hv_call(ghcb, SVM_VMGEXIT_PSC, 0, 0);
+
+		if (ret || ghcb->save_area.sw_exit_info2) {
+			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+			printf("SNP: PSC failed ret=%d exit_info_2=%lx\n",
+			       ret, ghcb->save_area.sw_exit_info2);
+			ret = 1;
+			goto out;
+		}
+
+		if (data->hdr.reserved) {
+			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+			printf("Reserved bit is set in the PSC header\n");
+			ret = 1;
+			goto out;
+		}
+
+		if (data->hdr.end_entry > end_entry ||
+		    cur_entry > data->hdr.cur_entry) {
+			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+			printf("SNP: PSC processing going backward, end_entry %d (got %d) cur_entry %d (got %d)\n",
+			       end_entry, data->hdr.end_entry,
+			       cur_entry, data->hdr.cur_entry);
+			ret = 1;
+			goto out;
+		}
+
+		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+		printf("cur_entry: %d end_entry: %d\n",
+		       data->hdr.cur_entry, data->hdr.end_entry);
+	}
+
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+	return ret;
+
+out:
+	return ret;
+}
+
+static void __set_pages_state(struct snp_psc_desc *data, unsigned long vaddr,
+			      unsigned long vaddr_end, int op, ghcb_page *ghcb)
+{
+	/* Save the old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+	struct psc_hdr *hdr;
+	struct psc_entry *entries;
+	unsigned long pfn;
+	int iter = 0;
+	unsigned long vaddr_start = vaddr;
+
+	hdr = &data->hdr;
+	entries = data->entries;
+
+	memset(data, 0, sizeof(*data));
+
+	while (vaddr_start < vaddr_end) {
+		pfn = __pa(vaddr_start) >> PAGE_SHIFT;
+		entries->gfn = pfn;
+		entries->operation = op;
+		hdr->end_entry = iter;
+		entries->pagesize = RMP_PG_SIZE_4K;
+
+		vaddr_start += PAGE_SIZE;
+		entries++;
+		iter++;
+	}
+
+	if (vmgexit_psc(data, ghcb)) {
+		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+		printf("WARNING: VMGEXIT unsuccessful.\n");
+		return;
+	}
+
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+}
+
+static void set_pages_state(unsigned long vaddr, unsigned int npages,
+			    int op, ghcb_page *ghcb)
+{
+	unsigned long vaddr_start = __pa(vaddr & PAGE_MASK), vaddr_end;
+	struct snp_psc_desc *desc;
+
+	desc = malloc(sizeof(*desc));
+	if (!desc) {
+		printf("WARNING: Failed to allocate memory for PSC descriptor.\n");
+		return;
+	}
+
+	vaddr_end = vaddr_start + (npages << PAGE_SHIFT);
+
+	/*
+	 * Calculate the last vaddr that can fit in PSC_MAX_ENTRY's
+	 * struct snp_psc_desc.
+	 */
+
+	__set_pages_state(desc, vaddr_start, vaddr_end, op, ghcb);
+
+	free(desc);
+}
+
+static void pvalidate_pages(unsigned long vaddr, unsigned int npages,
+			    bool validate)
+{
+	unsigned long vaddr_start, vaddr_end;
+	int pvalidate_result;
+
+	/* Compute the last address */
+	vaddr_start = vaddr;
+	vaddr_start = __pa(vaddr_start & PAGE_MASK);
+	vaddr_end = vaddr_start + (npages * PAGE_SIZE);
+
+	/* Save the old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/* Issue pvaldiate on every single page */
+	while (vaddr_start < vaddr_end) {
+		pvalidate_result = pvalidate(vaddr_start, RMP_PG_SIZE_4K,
+					     validate);
+		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+
+		printf("%s, vaddr: 0x%lx vaddr_end: 0x%lx\n", __func__,
+		       vaddr_start, vaddr_end);
+
+		if (pvalidate_result) {
+			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+			printf("WARNING: pvalidate unsuccessful\n");
+			return;
+		}
+		vaddr_start = vaddr_start + PAGE_SIZE;
+	}
+}
+
+void snp_set_memory_shared(unsigned long vaddr, unsigned int npages,
+			   ghcb_page *ghcb)
+{
+	/* Invalidate all the pages before turning them to shared */
+	pvalidate_pages(vaddr, npages, false);
+
+	set_pages_state(vaddr, npages, SNP_PAGE_STATE_SHARED, ghcb);
+}
+
 static void test_sev_snp_activation(void)
 {
 	unsigned long vmpl_bits;
@@ -515,9 +737,24 @@ static void test_sev_snp_activation(void)
 		printf("WARNING: SEV-SNP is not enabled.\n");
 }
 
+static void test_read_write(unsigned long paddr, int num_pages, int op)
+{
+	int iter;
+
+	for (iter = 0; iter < num_pages; iter++) {
+		strcpy((char *)&paddr, st1);
+		if (op == SNP_PAGE_STATE_SHARED)
+			printf("Shared page %d's content: %s\n", iter + 1,
+			       (char *)&paddr);
+
+		paddr += PAGE_SIZE;
+	}
+}
+
 static void test_sev_snp_psc(void)
 {
-	unsigned long vaddr;
+	unsigned long addr_shared, vaddr;
+
 	addr = (unsigned long)alloc_page();
 
 	if (!addr) {
@@ -537,6 +774,18 @@ static void test_sev_snp_psc(void)
 	set_page_encrypted();
 	strcpy((char *)addr, st1);
 	printf("Address content: %s\n", (char *)addr);
+
+	/* Allocate 4 (1<<2) pages for testing */
+	vm_pages = (unsigned long *)alloc_pages(2);
+
+	install_4k_pte((pgd_t *)read_cr3(), (unsigned long)vm_pages);
+
+	ghcb_page *ghcb = (ghcb_page *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	addr_shared = __pa((unsigned long)vm_pages);
+	/* Page State Changes - Private to Shared */
+	snp_set_memory_shared(addr_shared, 4, ghcb);
+	test_read_write(addr_shared, 4, SNP_PAGE_STATE_SHARED);
 }
 
 static void test_stringio(void)
