@@ -831,6 +831,11 @@ int main(void)
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
 	test_sev_snp_activation();
+	/*
+	 * Setup an alternate page table creation path for proper page
+	 * allocation
+	 */
+	setup_vm();
 	test_sev_snp_psc();
 	test_stringio();
 	return report_summary();
