@@ -699,8 +699,9 @@ void snp_set_memory_private(unsigned long vaddr, unsigned int npages,
 			    ghcb_page *ghcb)
 {
 	/* pvalidate all the pages after turning them to private */
-	pvalidate_pages(vaddr, npages, true);
 	set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE, ghcb);
+
+	pvalidate_pages(vaddr, npages, true);
 }
 
 static void test_sev_snp_activation(void)
