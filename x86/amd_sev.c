@@ -552,6 +552,9 @@ static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
 	end_entry = data->hdr.end_entry;
 
 	while (data->hdr.cur_entry <= data->hdr.end_entry) {
+		ghcb->save_area.sw_exit_code = 0;
+		memset(ghcb->save_area.valid_bitmap, 0,
+		       sizeof(ghcb->save_area.valid_bitmap));
 		ghcb_set_sw_scratch(ghcb, (uint64_t)__pa(data));
 
 		ret = sev_ghcb_hv_call(ghcb, SVM_VMGEXIT_PSC, 0, 0);
