@@ -30,6 +30,7 @@ fi
 shift 1
 
 if [ "$EFI_CASE" = "_NO_FILE_4Uhere_" ]; then
+	echo "There is No file 4U here"
 	EFI_CASE=dummy
 fi
 
@@ -40,8 +41,13 @@ fi
 : "${EFI_CASE_DIR:="$EFI_TEST/$EFI_CASE/EFI/BOOT"}"
 : "${EFI_CASE_BINARY:="$EFI_CASE_DIR/BOOTX64.EFI"}"
 
+echo "EFI_CASE_DIR: ${EFI_CASE_DIR}"
+echo "EFI_CASE_BINARY: ${EFI_CASE_BINARY}"
+
 mkdir -p "$EFI_CASE_DIR"
+echo "EFI_CASE_DIR: 2nd: ${EFI_CASE_DIR}"
 cp "$EFI_SRC/$EFI_CASE.efi" "$EFI_CASE_BINARY"
+echo "EFI_SRC/EFI_CASE.efi: ${EFI_SRC}, ${EFI_CASE}, ${EFI_CASE_BINARY}"
 
 # Run test case with 256MiB QEMU memory. QEMU default memory size is 128MiB.
 # After UEFI boot up and we call `LibMemoryMap()`, the largest consecutive
@@ -54,6 +60,12 @@ cp "$EFI_SRC/$EFI_CASE.efi" "$EFI_CASE_BINARY"
 # to x86/run. This `smp` flag overrides any previous `smp` flags (e.g.,
 # `-smp 4`). This is necessary because KVM-Unit-Tests do not currently support
 # SMP under UEFI. This last flag should be removed when this issue is resolved.
+echo "In $(pwd)"
+export QEMU=/home/amd/Documents/AMDSEV/snp-release-2023-03-31/usr/local/bin/qemu-system-x86_64
+#export
+#QEMU=/home/amd/Downloads/AMDSEV/snp-release-2022-08-22/usr/local/bin/qemu-system-x86_64
+export EFI_UEFI=/home/amd/Downloads/AMDSEV/usr/local/share/qemu/OVMF_CODE.fd
+export
 "$TEST_DIR/run" \
 	-drive file="$EFI_UEFI",format=raw,if=pflash,readonly=on \
 	-drive file.dir="$EFI_TEST/$EFI_CASE/",file.driver=vvfat,file.rw=on,format=raw,if=virtio \
@@ -62,3 +74,7 @@ cp "$EFI_SRC/$EFI_CASE.efi" "$EFI_CASE_BINARY"
 	-m 256 \
 	"$@" \
 	-smp "$EFI_SMP"
+
+#rm -r ../efi-tests/
+#.././configure --enable-efi
+#make -j 32
