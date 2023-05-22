@@ -707,7 +707,7 @@ void snp_set_memory_private(unsigned long vaddr, unsigned int npages,
 	pvalidate_pages(vaddr, npages, true);
 }
 
-static void test_sev_snp_activation(void)
+static int test_sev_snp_activation(void)
 {
 	unsigned long vmpl_bits;
 	efi_status_t status;
@@ -717,7 +717,7 @@ static void test_sev_snp_activation(void)
 
 	if (!(cpuid_out.a & SEV_SNP_SUPPORT_MASK)) {
 		printf("SEV-SNP is not advertised by CPUID.\n");
-		return;
+		return EXIT_FAILURE;
 	}
 	printf("SEV-SNP is advertised by CPUID.\n");
 
@@ -747,8 +747,11 @@ static void test_sev_snp_activation(void)
 		printf("%s SEV-SNP CC blob is %s present.\n",
 		       status == EFI_SUCCESS ? "" : "WARNING:",
 		       status == EFI_SUCCESS ? "" : "NOT");
-	} else
+	} else {
 		printf("WARNING: SEV-SNP is not enabled.\n");
+		return EXIT_FAILURE;
+	}
+	return EXIT_SUCCESS;
 }
 
 static void test_read_write(unsigned long paddr, int num_pages, int op)
@@ -833,7 +836,8 @@ int main(void)
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
-	test_sev_snp_activation();
+	rtn = test_sev_snp_activation();
+	report(rtn == EXIT_SUCCESS, "SEV-SNP activation test.");
 	/*
 	 * Setup an alternate page table creation path for proper page
 	 * allocation
