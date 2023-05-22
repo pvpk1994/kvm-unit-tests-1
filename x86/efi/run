@@ -1,4 +1,12 @@
 #!/bin/bash
+kut=$(pwd)
+
+pushd $kut
+rm -fr efi-tests/
+./configure --enable-efi
+make -j32
+popd
+pushd $kut
 
 set -e
 
