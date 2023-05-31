@@ -3,6 +3,7 @@
 #include "vmalloc.h"
 #include "alloc_page.h"
 #include "smp.h"
+#include "amd_sev.h"
 
 static pteval_t pte_opt_mask;
 
@@ -32,6 +33,7 @@ pteval_t *install_pte(pgd_t *cr3,
 	}
 	pt = phys_to_virt(pt[offset] & PT_ADDR_MASK);
     }
+//    printf("%s: level is %d\n", __func__, level);
     offset = PGDIR_OFFSET((uintptr_t)virt, level);
     pt[offset] = pte;
     return &pt[offset];
@@ -57,9 +59,9 @@ struct pte_search find_pte_level_dbg(pgd_t *cr3, void *virt,
 		r.pte = &pt[offset];
 		pte = *r.pte;
 
-	if (debug)
-		printf("%s: current lvl: %d (lowest: %d), page table address: %p, offset: 0x%x, pte: %llx\n",
-			   __func__, r.level, lowest_level, pt, offset, pte);
+		if (debug)
+			printf("%s: current lvl: %d (lowest: %d), page table address: %p, offset: 0x%x, pte: %lx\n",
+			 __func__, r.level, lowest_level, pt, offset, pte);
 
 		if (!(pte & PT_PRESENT_MASK))
 			return r;
@@ -77,7 +79,7 @@ struct pte_search find_pte_level_dbg(pgd_t *cr3, void *virt,
 struct pte_search find_pte_level(pgd_t *cr3, void *virt,
 				 int lowest_level)
 {
-	find_pte_level_dbg(cr3, virt, lowest_level, false);
+	return find_pte_level_dbg(cr3, virt, lowest_level, false);
 }
 
 /*
@@ -222,7 +224,7 @@ void *setup_mmu(phys_addr_t end_of_memory, void *opt_mask)
     setup_mmu_range(cr3, 3ul << 30, (1ul << 30));
     init_alloc_vpage((void*)(3ul << 30));
 #endif
-
+    setup_ghcb_pte(cr3);
     write_cr3(virt_to_phys(cr3));
 #ifndef __x86_64__
     write_cr4(X86_CR4_PSE);
@@ -271,8 +273,10 @@ void split_large_page(unsigned long *ptep, int level)
 	assert(new_pt);
 
 	prototype = pte & ~PT_ADDR_MASK;
-	if (level == 2)
+	if (level == 2) {
+		printf("prototype levl: %d\n", level);
 		prototype &= ~PT_PAGE_SIZE_MASK;
+	}
 
 	pa = pte & PT_ADDR_MASK;
 	for (i = 0; i < (1 << PGDIR_WIDTH); i++) {
@@ -282,6 +286,9 @@ void split_large_page(unsigned long *ptep, int level)
 
 	pte &= ~PT_PAGE_SIZE_MASK;
 	pte &= ~PT_ADDR_MASK;
+	#ifdef CONFIG_EFI
+    	pte |= get_amd_sev_c_bit_mask();
+	#endif /* CONFIG_EFI */
 	pte |= virt_to_phys(new_pt);
 
 	/* Modify the relevant paging-structure entry */
@@ -317,19 +324,22 @@ void force_4k_page(void *addr)
 	unsigned long pte;
 	unsigned long *cr3 = current_page_table();
 
-	ptep = get_pte_level(cr3, addr, 3);
+	ptep = get_pte_level_dbg(cr3, addr, 3, true);
 	assert(ptep);
 	pte = *ptep;
 	assert(pte & PT_PRESENT_MASK);
 	if (pte & PT_PAGE_SIZE_MASK)
 		split_large_page(ptep, 3);
 
-	ptep = get_pte_level(cr3, addr, 2);
+	ptep = get_pte_level_dbg(cr3, addr, 2, true);
 	assert(ptep);
+
 	pte = *ptep;
 	assert(pte & PT_PRESENT_MASK);
-	if (pte & PT_PAGE_SIZE_MASK)
+	if (pte & PT_PAGE_SIZE_MASK) {
+		*ptep |= PT_WRITABLE_MASK | pte_opt_mask | PT_PAGE_SIZE_MASK;
 		split_large_page(ptep, 2);
+	}
 }
 
 /*
