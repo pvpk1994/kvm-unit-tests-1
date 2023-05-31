@@ -31,16 +31,16 @@ struct cc_blob_sev_info *snp_cc_blob;
 
 static char st1[] = "abcdefghijklmnop";
 
-static unsigned long addr;
+//static unsigned long addr;
 static unsigned long *vm_pages;
 
 static void snp_set_page_shared(unsigned long paddr);
 static void snp_set_page_private(unsigned long paddr);
-static void set_page_encrypted(void);
-static void set_page_decrypted(void);
-static void unset_c_bit_pte(void);
+static void set_page_encrypted(unsigned long vaddr);
+static void set_page_decrypted(unsigned long vaddr);
+static void unset_c_bit_pte(unsigned long vaddr);
 static void test_sev_snp_psc(void);
-static void set_c_bit_pte(void);
+static void set_c_bit_pte(unsigned long vaddr);
 static void snp_set_memory_shared(unsigned long vaddr, unsigned int npages,
 				  ghcb_page *ghcb);
 static void snp_set_memory_private(unsigned long vaddr, unsigned int npages,
@@ -451,11 +451,11 @@ static void snp_set_page_shared(unsigned long paddr)
 	__page_state_change(paddr, SNP_PAGE_STATE_SHARED);
 }
 
-static void unset_c_bit_pte(void)
+static void unset_c_bit_pte(unsigned long vaddr)
 {
 	pteval_t *pte;
 
-	pte = get_pte((pgd_t *)read_cr3(), (void *)addr);
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
 
 	if (!pte) {
 		printf("WARNING: pte is null.\n");
@@ -466,11 +466,11 @@ static void unset_c_bit_pte(void)
 	*pte &= ~(get_amd_sev_c_bit_mask());
 }
 
-void set_c_bit_pte(void)
+void set_c_bit_pte(unsigned long vaddr)
 {
 	pteval_t *pte;
 
-	pte = get_pte((pgd_t *)read_cr3(), (void *)addr);
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
 
 	if (!pte) {
 		printf("WARNING: pte is null.\n");
@@ -481,33 +481,33 @@ void set_c_bit_pte(void)
 	*pte |= get_amd_sev_c_bit_mask();
 }
 
-static void set_clr_page_flags(pteval_t set, pteval_t clr)
+static void set_clr_page_flags(pteval_t set, pteval_t clr, unsigned long vaddr)
 {
 	if (clr & _PAGE_ENC) {
 		/*
 		 * If the encryption bit is cleared, make the page state
 		 * entry to SHARED in RMP table.
 		 */
-		snp_set_page_shared(__pa(addr & PAGE_MASK));
-		unset_c_bit_pte();
+		snp_set_page_shared(__pa(vaddr & PAGE_MASK));
+		unset_c_bit_pte(vaddr);
 	}
 
 	else if (set & _PAGE_ENC) {
-		set_c_bit_pte();
-		snp_set_page_private(__pa(addr & PAGE_MASK));
+		set_c_bit_pte(vaddr);
+		snp_set_page_private(__pa(vaddr & PAGE_MASK));
 	}
 
 	flush_tlb();
 }
 
-void set_page_decrypted(void)
+void set_page_decrypted(unsigned long vaddr)
 {
-	set_clr_page_flags(0, _PAGE_ENC);
+	set_clr_page_flags(0, _PAGE_ENC, vaddr);
 }
 
-void set_page_encrypted(void)
+void set_page_encrypted(unsigned long vaddr)
 {
-	set_clr_page_flags(_PAGE_ENC, 0);
+	set_clr_page_flags(_PAGE_ENC, 0, vaddr);
 }
 
 static enum es_result verify_exception(ghcb_page *ghcb)
@@ -542,9 +542,6 @@ static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
 	int cur_entry, end_entry, ret = 0;
 	struct snp_psc_desc *data;
 
-	/* Save the old GHCB MSR */
-	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
-
 	data = (struct snp_psc_desc *)ghcb->shared_buffer;
 	memcpy(ghcb->shared_buffer, desc, sizeof(*desc));
 
@@ -560,7 +557,6 @@ static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
 		ret = sev_ghcb_hv_call(ghcb, SVM_VMGEXIT_PSC, 0, 0);
 
 		if (ret || ghcb->save_area.sw_exit_info2) {
-			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 			printf("SNP: PSC failed ret=%d exit_info_2=%lx\n",
 			       ret, ghcb->save_area.sw_exit_info2);
 			ret = 1;
@@ -568,7 +564,6 @@ static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
 		}
 
 		if (data->hdr.reserved) {
-			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 			printf("Reserved bit is set in the PSC header\n");
 			ret = 1;
 			goto out;
@@ -576,20 +571,15 @@ static int vmgexit_psc(struct snp_psc_desc *desc, ghcb_page *ghcb)
 
 		if (data->hdr.end_entry > end_entry ||
 		    cur_entry > data->hdr.cur_entry) {
-			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 			printf("SNP: PSC processing going backward, end_entry %d (got %d) cur_entry %d (got %d)\n",
 			       end_entry, data->hdr.end_entry,
 			       cur_entry, data->hdr.cur_entry);
 			ret = 1;
 			goto out;
 		}
-
-		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 		printf("cur_entry: %d end_entry: %d\n",
 		       data->hdr.cur_entry, data->hdr.end_entry);
 	}
-
-	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 	return ret;
 
 out:
@@ -668,24 +658,16 @@ static void pvalidate_pages(unsigned long vaddr, unsigned int npages,
 	vaddr_start = __pa(vaddr_start & PAGE_MASK);
 	vaddr_end = vaddr_start + (npages * PAGE_SIZE);
 
-	/* Save the old GHCB MSR */
-	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
-
 	/* Issue pvaldiate on every single page */
 	while (vaddr_start < vaddr_end) {
 		pvalidate_result = pvalidate(vaddr_start, RMP_PG_SIZE_4K,
 					     validate);
-		wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
-
-		printf("%s, vaddr: 0x%lx vaddr_end: 0x%lx\n", __func__,
-		       vaddr_start, vaddr_end);
 
 		if (pvalidate_result) {
-			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 			printf("WARNING: pvalidate unsuccessful\n");
 			return;
 		}
-		vaddr_start = vaddr_start + PAGE_SIZE;
+		vaddr_start += PAGE_SIZE;
 	}
 }
 
@@ -773,32 +755,33 @@ static void test_read_write(unsigned long paddr, int num_pages, int op)
 
 static void test_sev_snp_psc(void)
 {
-	unsigned long addr_shared, vaddr, addr_private;
+	unsigned long addr_shared, *vaddr, addr_private;
 
-	addr = (unsigned long)alloc_page();
+	vaddr = alloc_page();
 
-	if (!addr) {
+	if (!vaddr) {
 		printf("WARNING: Page not allocated!\n");
-		assert(addr);
+		assert(vaddr);
 	}
 
-	install_4k_pte((pgd_t *)read_cr3(), addr);
+	force_4k_page(vaddr);
+
 	/* Perform Private <=> Shared page state change */
-	set_page_decrypted();
-	vaddr = addr;
-	strcpy((char *)addr, st1);
-	printf("Address content: %s\n", (char *)addr);
+	set_page_decrypted((unsigned long)vaddr);
+//	vaddr = addr;
+//	strcpy((char *)addr, st1);
+//	printf("Address content: %s\n", (char *)addr);
 
 	/* Convert same page back from Shared => Private here */
-	addr = vaddr;
-	set_page_encrypted();
-	strcpy((char *)addr, st1);
-	printf("Address content: %s\n", (char *)addr);
+	set_page_encrypted((unsigned long)vaddr);
+//	strcpy((char *)addr, st1);
+//	printf("Address content: %s\n", (char *)addr);
 
 	/* Allocate 4 (1<<2) pages for testing */
 	vm_pages = (unsigned long *)alloc_pages(2);
 
-	install_4k_pte((pgd_t *)read_cr3(), (unsigned long)vm_pages);
+//	install_4k_pte((pgd_t *)read_cr3(), (unsigned long)vm_pages);
+	force_4k_page(vm_pages);
 
 	ghcb_page *ghcb = (ghcb_page *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
 

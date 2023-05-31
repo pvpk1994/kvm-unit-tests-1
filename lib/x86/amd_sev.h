@@ -282,7 +282,6 @@ void vmgexit(ghcb_page *ghcb, u64 exit_code, u64 exit_info1,
 	     u64 exit_info2);
 uint64_t asm_read_cr4(void);
 uint64_t asm_xgetbv(uint32_t index);
-void install_4k_pte(pgd_t *cr3, phys_addr_t addr);
 
 /*
  * Macros to generate condition code outputs from inline assembly,

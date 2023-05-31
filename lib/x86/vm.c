@@ -58,9 +58,9 @@ struct pte_search find_pte_level_dbg(pgd_t *cr3, void *virt,
 		r.pte = &pt[offset];
 		pte = *r.pte;
 
-	if (debug)
-		printf("%s: current lvl: %d (lowest: %d), page table address: %p, offset: 0x%x, pte: %llx\n",
-			   __func__, r.level, lowest_level, pt, offset, pte);
+		if (debug)
+			printf("%s: current lvl: %d (lowest: %d), page table address: %p, offset: 0x%x, pte: %lx\n",
+			       __func__, r.level, lowest_level, pt, offset, pte);
 
 		if (!(pte & PT_PRESENT_MASK))
 			return r;
@@ -78,7 +78,7 @@ struct pte_search find_pte_level_dbg(pgd_t *cr3, void *virt,
 struct pte_search find_pte_level(pgd_t *cr3, void *virt,
 				 int lowest_level)
 {
-	find_pte_level_dbg(cr3, virt, lowest_level, false);
+	return find_pte_level_dbg(cr3, virt, lowest_level, false);
 }
 
 /*

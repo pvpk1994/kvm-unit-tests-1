@@ -265,28 +265,3 @@ void vmgexit(ghcb_page *ghcb, u64 exit_code,
 	VMGEXIT();
 	mem_fence();
 }
-
-void install_4k_pte(pgd_t *cr3, phys_addr_t addr)
-{
-	/* We currently obtain 2M PTEs and for carrying out page state
-	 * change operations successfully, we need to install 4K PTEs in
-	 * the 2M page range.
-	 */
-	phys_addr_t offset;
-	pteval_t *pte;
-
-	/* Find level 2 base address */
-	offset = addr & ~(LARGE_PAGE_SIZE - 1);
-	/* Install level 1 (4K PTEs) here */
-	install_pages(cr3, offset, LARGE_PAGE_SIZE, (void *)offset);
-	/* Find level 2 PTEs, now set as 4K PTEs */
-	pte = get_pte_level(cr3, (void *)addr, 2);
-	assert(pte);
-	/* Disable page size mask */
-	*pte &= ~(PT_PAGE_SIZE_MASK);
-	/* Obtain level 1 4K PTE, on which psc operations can now be
-	 * performed.
-	 */
-	pte = get_pte_level(cr3, (void *)addr, 1);
-	assert(pte);
-}
