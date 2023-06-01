@@ -285,6 +285,7 @@ void bringup_aps(void)
 	_cpu_count = fwcfg_get_nb_cpus();
 
 	printf("smp: waiting for %d APs\n", _cpu_count - 1);
-	while (_cpu_count != atomic_read(&cpu_online_count))
+	while (_cpu_count-1 != atomic_read(&cpu_online_count)) {
 		cpu_relax();
+	}
 }
