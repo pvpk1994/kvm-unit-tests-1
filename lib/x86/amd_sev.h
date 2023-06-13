@@ -71,6 +71,10 @@ struct es_em_ctxt {
 #define CPUID_FN_LARGEST_EXT_FUNC_NUM 0x80000000
 #define CPUID_FN_ENCRYPT_MEM_CAPAB    0x8000001f
 #define SEV_SUPPORT_MASK              0b10
+#define SEV_SNP_SUPPORT_MASK          0b10000
+#define VMPL_SUPPORT_MASK             0b100000
+#define VMPL_COUNT_MASK               0xF000
+#define VMPL_COUNT_SHIFT              12
 
 /*
  * AMD Programmer's Manual Volume 2
