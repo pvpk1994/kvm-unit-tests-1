@@ -15,6 +15,7 @@
 #include "x86/amd_sev.h"
 #include "msr.h"
 #include "x86/xsave.h"
+#include "x86/vm.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -314,6 +315,7 @@ int main(void)
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
+	setup_vm();
 	test_sev_snp_activation();
 	test_stringio();
 	return report_summary();
