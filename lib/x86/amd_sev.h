@@ -35,10 +35,35 @@ struct ghcb {
 	u32 ghcb_usage;
 } __packed;
 
+typedef union {
+	struct {
+		uint32_t vector			: 8;
+		uint32_t type			: 3;
+		uint32_t error_code_valid	: 1;
+		uint32_t rsvd			: 19;
+		uint32_t valid			: 1;
+		uint32_t err_code;
+	} elements;
+
+	uint64_t uint64;
+} ghcb_event_injection;
+
+typedef union {
+	struct {
+		uint32_t lower32;
+		uint32_t upper32;
+	} elements;
+
+	uint64_t uint64;
+} ghcb_exit_info;
+
 #define GHCB_PROTO_OUR		0x0001UL
 #define GHCB_PROTOCOL_MAX	1ULL
 #define GHCB_DEFAULT_USAGE	0ULL
+#define GHCB_EVENT_INJECTION_TYPE_EXCEPTION	3
 
+#define GP_EXCEPTION		13
+#define UD_EXCEPTION		6
 #define	VMGEXIT()			{ asm volatile("rep; vmmcall\n\r"); }
 
 enum es_result {
@@ -82,6 +107,15 @@ struct cc_blob_sev_info {
 	u32 rsvd2;
 } __packed;
 
+struct cpuid_leaf {
+	u32 eax_in;
+	u32 ecx_in;
+	u32 eax;
+	u32 ebx;
+	u32 ecx;
+	u32 edx;
+};
+
 /*
  * AMD Programmer's Manual Volume 3
  *   - Section "Function 8000_0000h - Maximum Extended Function Number and Vendor String"
@@ -123,6 +157,10 @@ void handle_sev_es_vc(struct ex_regs *regs);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);
+uint64_t vmgexit(struct ghcb *ghcb, u64 exit_code, u64 exit_info1,
+		 u64 exit_info2);
+uint64_t asm_read_cr4(void);
+uint64_t asm_xgetbv(uint32_t index);
 
 /* GHCB Accessor functions from Linux's include/asm/svm.h */
 

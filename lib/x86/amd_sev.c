@@ -16,6 +16,25 @@
 static unsigned short amd_sev_c_bit_pos;
 phys_addr_t ghcb_addr;
 
+u64 asm_read_cr4(void)
+{
+	u64 data;
+
+	__asm__ __volatile__("mov %%cr4, %0" : "=a" (data));
+
+	return data;
+}
+
+u64 asm_xgetbv(u32 index)
+{
+	u32 eax, edx;
+
+	__asm__ __volatile__("xgetbv" : "=a" (eax), "=d" (edx) :
+			     "c" (index));
+
+	return eax + ((u64)edx << 32);
+}
+
 bool amd_sev_enabled(void)
 {
 	struct cpuid cpuid_out;
@@ -192,4 +211,64 @@ unsigned long long get_amd_sev_addr_upperbound(void)
 		/* Default memory upper bound */
 		return PT_ADDR_UPPER_BOUND_DEFAULT;
 	}
+}
+
+static inline uint64_t vmg_exit_error_check(struct ghcb *ghcb)
+{
+	ghcb_event_injection event;
+	ghcb_exit_info exit_info;
+	uint64_t status;
+
+	exit_info.uint64 = ghcb->save.sw_exit_info_1;
+	assert((exit_info.elements.lower32 == 0) ||
+	       (exit_info.elements.upper32 == 1));
+
+	status = 0;
+	if (exit_info.elements.lower32 == 0)
+		return status;
+
+	if (exit_info.elements.upper32 == 1) {
+		assert(ghcb->save.sw_exit_info_2 != 0);
+
+		/* Check if return event is valid */
+		event.uint64 = ghcb->save.sw_exit_info_2;
+		if (event.elements.valid &&
+		    event.elements.type ==
+		    GHCB_EVENT_INJECTION_TYPE_EXCEPTION) {
+			switch (event.elements.vector) {
+			case GP_EXCEPTION:
+			case UD_EXCEPTION:
+				status = event.uint64;
+			}
+		}
+	}
+
+	if (!status) {
+		ghcb_event_injection gp_event;
+
+		gp_event.uint64			= 0;
+		gp_event.elements.vector	= GP_EXCEPTION;
+		gp_event.elements.type		= GHCB_EVENT_INJECTION_TYPE_EXCEPTION;
+		gp_event.elements.valid		= 1;
+
+		status = gp_event.uint64;
+	}
+
+	return status;
+}
+
+uint64_t vmgexit(struct ghcb *ghcb, u64 exit_code,
+		 u64 exit_info1, u64 exit_info2)
+{
+	ghcb_set_sw_exit_code(ghcb, exit_code);
+	ghcb_set_sw_exit_info_1(ghcb, exit_info1);
+	ghcb_set_sw_exit_info_2(ghcb, exit_info2);
+
+	/*
+	 * Memory fencing ensures writes are not ordered after the
+	 * VMGEXIT(), and reads are not ordered before it.
+	 */
+	VMGEXIT();
+
+	return vmg_exit_error_check(ghcb);
 }

@@ -20,6 +20,8 @@
 
 #define TESTDEV_IO_PORT 0xe0
 
+#define CPUID_EXTENDED_STATE	0xd
+
 struct cc_blob_sev_info *snp_cc_blob;
 
 static char st1[] = "abcdefghijklmnop";
@@ -91,6 +93,246 @@ static efi_status_t find_cc_blob_efi(void)
 	return EFI_SUCCESS;
 }
 
+static void copy_cpuid_leaf(struct cpuid_leaf *leaf, struct cpuid g_cpuid,
+			    u32 eax_input, u32 ecx_input)
+{
+	leaf->eax_in = eax_input;
+	leaf->ecx_in = ecx_input;
+	leaf->eax = g_cpuid.a;
+	leaf->ebx = g_cpuid.b;
+	leaf->ecx = g_cpuid.c;
+	leaf->edx = g_cpuid.d;
+}
+
+inline bool compare_cpuid(struct cpuid_leaf cpuid0, struct cpuid_leaf cpuid1)
+{
+	return cpuid0.eax == cpuid1.eax && cpuid0.ebx == cpuid1.ebx &&
+	       cpuid0.ecx == cpuid1.ecx && cpuid0.edx == cpuid1.edx;
+}
+
+/* Fetch CPUID leaf from Hypervisor, via VMGEXIT using GHCB page */
+static uint64_t fetch_cpuid_hyp(struct ghcb *ghcb, struct cpuid_leaf *leaf)
+{
+	uint64_t status = 0;
+
+	ghcb_set_rax(ghcb, leaf->eax_in);
+	ghcb_set_rcx(ghcb, leaf->ecx_in);
+
+	if (leaf->eax_in == CPUID_EXTENDED_STATE)
+		ghcb_set_xcr0(ghcb, (X86_CR4_OSXSAVE & asm_read_cr4()) ?
+				    asm_xgetbv(0) : 1);
+
+	status = vmgexit(ghcb, SVM_EXIT_CPUID, 0, 0);
+	if (status != 0)
+		return status;
+
+	/* Check if valid bits are set for each register by hypervisor */
+	if (!ghcb_rax_is_valid(ghcb) || !ghcb_rbx_is_valid(ghcb) ||
+	    !ghcb_rcx_is_valid(ghcb) || !ghcb_rdx_is_valid(ghcb)) {
+		status = 1;
+		return status;
+	}
+
+	/* Copy ghcb register info to cpuid leaf */
+	leaf->eax = (u32)ghcb->save.rax;
+	leaf->ebx = (u32)ghcb->save.rbx;
+	leaf->ecx = (u32)ghcb->save.rcx;
+	leaf->edx = (u32)ghcb->save.rdx;
+
+	return status;
+}
+
+static inline void result_mismatch(u32 iter, struct cpuid_leaf *guest,
+				   struct cpuid_leaf *hyp)
+{
+	printf("WARNING: CPUID leaf %d mismatch.\n", iter);
+
+	/* Guest reported CPUID leaf mismatch */
+	printf("SNP CPUID leaf-0x%08x:\n sub-leaf-0x%08x:\n"
+	       " EAX:0x%x\n EBX:0x%x\n ECX:0x%x\n EDX:0x%x\n",
+	       guest->eax_in, guest->ecx_in, guest->eax, guest->ebx,
+	       guest->ecx, guest->edx);
+
+	/* Hypervisor reported CPUID leaf mismatch */
+	printf("Hypervisor CPUID leaf-0x%08x:\n sub-leaf-0x%08x:\n"
+	       " EAX:0x%x\n EBX:0x%x\n ECX:0x%x\n EDX:0x%x\n",
+	       hyp->eax_in, hyp->ecx_in, hyp->eax, hyp->ebx,
+	       hyp->ecx, hyp->edx);
+}
+
+static efi_status_t test_standard_cpuid_range(struct cpuid result,
+					      struct ghcb *ghcb)
+{
+	efi_status_t status = EFI_SUCCESS;
+	u32 std_range_max = result.a, iter;
+
+	printf("standard max range: %d\n", std_range_max);
+	for (iter = 0; iter <= std_range_max; iter++) {
+		struct cpuid guest_cpuid = cpuid_indexed(iter, 0);
+		struct cpuid_leaf guest_cpuid_leaf, hyp_cpuid;
+
+		copy_cpuid_leaf(&guest_cpuid_leaf, guest_cpuid, iter, 0);
+
+		hyp_cpuid.eax_in = iter;
+		hyp_cpuid.ecx_in = 0;
+
+		if (fetch_cpuid_hyp(ghcb, &hyp_cpuid))
+			return EFI_UNSUPPORTED;
+
+		if (!compare_cpuid(guest_cpuid_leaf, hyp_cpuid)) {
+			result_mismatch(iter, &guest_cpuid_leaf,
+					&hyp_cpuid);
+			status = EFI_NOT_FOUND;
+		}
+
+		/*
+		 * Special handling for CPUID leaf 0xb having non-zero
+		 * sub-leaves.
+		 */
+		if (guest_cpuid_leaf.eax_in == 0x0000000b) {
+			do {
+				guest_cpuid_leaf.ecx_in++;
+
+				guest_cpuid = cpuid_indexed(guest_cpuid_leaf.eax_in,
+							    guest_cpuid_leaf.ecx_in);
+
+				copy_cpuid_leaf(&guest_cpuid_leaf,
+						guest_cpuid, iter,
+						guest_cpuid_leaf.ecx_in);
+
+				hyp_cpuid.eax_in = guest_cpuid_leaf.eax_in;
+				hyp_cpuid.ecx_in = guest_cpuid_leaf.ecx_in;
+
+				fetch_cpuid_hyp(ghcb, &hyp_cpuid);
+
+				if (!compare_cpuid(guest_cpuid_leaf,
+						   hyp_cpuid)) {
+					result_mismatch(iter, &guest_cpuid_leaf,
+							&hyp_cpuid);
+					status = EFI_NOT_FOUND;
+				}
+
+			} while (guest_cpuid.a);
+		}
+
+		/*
+		 * Special handling for CPUID leaf 0xD having non-zero
+		 * sub-leaves
+		 */
+		else if (guest_cpuid_leaf.eax_in == 0x0000000d) {
+			u32 subleaf = 1;
+			u32 xsave_support_ft_mask = guest_cpuid.a;
+
+			guest_cpuid = cpuid_indexed(iter, 1);
+
+			copy_cpuid_leaf(&guest_cpuid_leaf, guest_cpuid,
+					iter, 1);
+
+			hyp_cpuid.eax_in = iter;
+			hyp_cpuid.ecx_in = 1;
+
+			fetch_cpuid_hyp(ghcb, &hyp_cpuid);
+
+			if (!compare_cpuid(guest_cpuid_leaf, hyp_cpuid)) {
+				result_mismatch(iter, &guest_cpuid_leaf,
+						&hyp_cpuid);
+				status = EFI_NOT_FOUND;
+			}
+
+			for (subleaf = 1; subleaf < 32; subleaf++) {
+				if (!(xsave_support_ft_mask & (1 << subleaf))) {
+					subleaf++;
+					continue;
+				}
+				guest_cpuid = cpuid_indexed(iter, subleaf);
+
+				copy_cpuid_leaf(&guest_cpuid_leaf,
+						guest_cpuid, iter, subleaf);
+
+				hyp_cpuid.eax_in = iter;
+				hyp_cpuid.ecx_in = subleaf;
+
+				fetch_cpuid_hyp(ghcb, &hyp_cpuid);
+
+				if (!compare_cpuid(guest_cpuid_leaf, hyp_cpuid)) {
+					result_mismatch(iter, &guest_cpuid_leaf,
+							&hyp_cpuid);
+					status = EFI_NOT_FOUND;
+				}
+			}
+		}
+	}
+	return status;
+}
+
+static efi_status_t test_extended_cpuid_range(struct cpuid result,
+					      struct ghcb *ghcb)
+{
+	efi_status_t status = EFI_SUCCESS;
+	u32 ext_range_max = result.a & 0xff, iter;
+
+	printf("extended max range: %d\n", ext_range_max);
+	for (iter = 0x80000000; iter <= result.a; iter++) {
+		struct cpuid guest_cpuid = cpuid_indexed(iter, 0);
+		struct cpuid_leaf guest_cpuid_leaf, hyp_cpuid;
+
+		copy_cpuid_leaf(&guest_cpuid_leaf, guest_cpuid, iter, 0);
+
+		hyp_cpuid.eax_in = iter;
+		hyp_cpuid.ecx_in = 0;
+
+		if (fetch_cpuid_hyp(ghcb, &hyp_cpuid))
+			return EFI_UNSUPPORTED;
+
+		if (!compare_cpuid(guest_cpuid_leaf, hyp_cpuid)) {
+			result_mismatch(iter, &guest_cpuid_leaf,
+					&hyp_cpuid);
+			status = EFI_NOT_FOUND;
+		}
+
+		if (guest_cpuid_leaf.eax_in == 0x8000001d) {
+			u32 subfn = 1;
+
+			do {
+				guest_cpuid = cpuid_indexed(iter, subfn);
+
+				copy_cpuid_leaf(&guest_cpuid_leaf,
+						guest_cpuid, iter, subfn);
+
+				hyp_cpuid.eax_in = iter;
+				hyp_cpuid.ecx_in = subfn;
+
+				fetch_cpuid_hyp(ghcb, &hyp_cpuid);
+
+				if (!compare_cpuid(guest_cpuid_leaf,
+						   hyp_cpuid)) {
+					result_mismatch(iter, &guest_cpuid_leaf,
+							&hyp_cpuid);
+					status = EFI_NOT_FOUND;
+				}
+
+				subfn++;
+			} while (guest_cpuid.a);
+		}
+	}
+	return status;
+}
+
+static efi_status_t test_sev_snp_cpuid(struct ghcb *ghcb)
+{
+	struct cpuid res_std, res_ext;
+
+	res_std = cpuid_indexed(0x0, 0);
+	res_ext = cpuid_indexed(0x80000000, 0);
+
+	if (test_standard_cpuid_range(res_std, ghcb) == EFI_SUCCESS &&
+	    test_extended_cpuid_range(res_ext, ghcb) == EFI_SUCCESS) {
+		return EFI_SUCCESS;
+	}
+
+	return EFI_NOT_FOUND;
+}
+
 static void test_sev_snp_activation(void)
 {
 	efi_status_t status;
@@ -107,6 +349,13 @@ static void test_sev_snp_activation(void)
 		if (status != EFI_SUCCESS)
 			printf("%sSEV-SNP CC blob is %spresent.\n",
 			       "WARNING: ", "NOT ");
+
+		struct ghcb *ghcb = (struct ghcb *)
+				    (rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+		status = test_sev_snp_cpuid(ghcb);
+		if (status != EFI_SUCCESS)
+			printf("SEV-SNP CPUID NOT matching all leaves\n");
 	} else {
 		printf("WARNING: SEV-SNP is not enabled.\n");
 	}
