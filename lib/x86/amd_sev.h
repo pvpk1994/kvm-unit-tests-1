@@ -82,6 +82,15 @@ struct cc_blob_sev_info {
 	u32 rsvd2;
 } __packed;
 
+struct cpuid_leaf {
+	u32 eax_in;
+	u32 ecx_in;
+	u32 eax;
+	u32 ebx;
+	u32 ecx;
+	u32 edx;
+};
+
 /*
  * AMD Programmer's Manual Volume 3
  *   - Section "Function 8000_0000h - Maximum Extended Function Number and Vendor String"
