@@ -14,6 +14,7 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "x86/vm.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -134,5 +135,6 @@ int main(void)
 	test_sev_es_activation();
 	test_sev_snp_activation();
 	test_stringio();
+	setup_vm();
 	return report_summary();
 }
