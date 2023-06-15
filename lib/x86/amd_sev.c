@@ -15,6 +15,25 @@
 
 static unsigned short amd_sev_c_bit_pos;
 
+u64 asm_read_cr4(void)
+{
+	u64 data;
+
+	__asm__ __volatile__("mov %%cr4, %0" : "=a" (data));
+
+	return data;
+}
+
+u64 asm_xgetbv(u32 index)
+{
+	u32 eax, edx;
+
+	__asm__ __volatile__("xgetbv" : "=a" (eax), "=d" (edx) : "c"
+			     (index));
+
+	return eax + ((u64)edx << 32);
+}
+
 bool amd_sev_enabled(void)
 {
 	struct cpuid cpuid_out;
@@ -209,4 +228,45 @@ unsigned long long get_amd_sev_addr_upperbound(void)
 		/* Default memory upper bound */
 		return PT_ADDR_UPPER_BOUND_DEFAULT;
 	}
+}
+
+/*
+ * Mark a field at specified offset as valid in GHCB.
+ * Hypervisor will fail the GHCB requests in cases where fields are set
+ * without updating the bitmap.
+ */
+void vmg_set_offset_valid(ghcb_page *ghcb, GHCB_REGISTER offset)
+{
+	u32 offset_index;
+	u32 offset_bit;
+
+	offset_index = offset / 8;
+	offset_bit   = offset % 8;
+
+	ghcb->save_area.valid_bitmap[offset_index] |= (1 << offset_bit);
+}
+
+void mem_fence(void)
+{
+	__asm__ __volatile__("":::"memory");
+}
+
+void vmgexit(ghcb_page *ghcb, u64 exit_code,
+	     u64 exit_info1, u64 exit_info2)
+{
+	ghcb->save_area.sw_exit_code = exit_code;
+	ghcb->save_area.sw_exit_info1 = exit_info1;
+	ghcb->save_area.sw_exit_info2 = exit_info2;
+
+	vmg_set_offset_valid(ghcb, ghcb_sw_exit_code);
+	vmg_set_offset_valid(ghcb, ghcb_sw_exit_info1);
+	vmg_set_offset_valid(ghcb, ghcb_sw_exit_info2);
+
+	/*
+	 * Memory fencing ensures writes are not ordered after the
+	 * VMGEXIT(), and reads are not ordered before it.
+	 */
+	mem_fence();
+	VMGEXIT();
+	mem_fence();
 }

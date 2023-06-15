@@ -38,6 +38,15 @@ struct cc_blob_sev_info {
 	u32 rsvd2;
 } __packed;
 
+struct cpuid_leaf {
+	u32 eax_in;
+	u32 ecx_in;
+	u32 eax;
+	u32 ebx;
+	u32 ecx;
+	u32 edx;
+};
+
 /*
  * AMD Programmer's Manual Volume 3
  *   - Section "Function 8000_0000h - Maximum Extended Function Number and Vendor String"
@@ -68,12 +77,61 @@ efi_status_t setup_amd_sev(void);
  *   - Section "#VC Exception"
  */
 #define SEV_ES_VC_HANDLER_VECTOR 29
+#define SVM_EXIT_CPUID  0x72ULL
 
 /*
  * AMD Programmer's Manual Volume 2
  *   - Section "GHCB"
  */
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
+#define VMGEXIT()		{ asm volatile("rep; vmmcall\n\r"); }
+
+typedef struct {
+	u8  reserved1[203];
+	u8  cpl;
+	u8  reserved8[300];
+	u64 rax;
+	u8  reserved4[264];
+	u64 rcx;
+	u64 rdx;
+	u64 rbx;
+	u8  reserved5[112];
+	u64 sw_exit_code;
+	u64 sw_exit_info1;
+	u64 sw_exit_info2;
+	u64 sw_scratch;
+	u8  reserved6[56];
+	u64 xcr0;
+	u8  valid_bitmap[16];
+	u64 x87_state_gpa;
+	u8  reserved7[1016];
+} ghcb_save_area;
+
+typedef struct {
+	ghcb_save_area	save_area;
+	u8		shared_buffer[2032];
+	u8		reserved1[10];
+	u16		protocol_version;
+	u32		ghcb_usage;
+} ghcb_page;
+
+#define OFFSET_OF(TYPE, field)  ((u64)&(((TYPE *)0)->field))
+
+#define GHCB_SAVE_AREA_QWORD_OFFSET(reg_field) \
+	(OFFSET_OF(ghcb_page, save_area.reg_field) / sizeof(u64))
+
+typedef enum {
+	ghcb_cpl	= GHCB_SAVE_AREA_QWORD_OFFSET(cpl),
+	ghcb_rax	= GHCB_SAVE_AREA_QWORD_OFFSET(rax),
+	ghcb_rbx	= GHCB_SAVE_AREA_QWORD_OFFSET(rbx),
+	ghcb_rcx	= GHCB_SAVE_AREA_QWORD_OFFSET(rcx),
+	ghcb_rdx	= GHCB_SAVE_AREA_QWORD_OFFSET(rdx),
+	ghcb_xcr0	= GHCB_SAVE_AREA_QWORD_OFFSET(xcr0),
+	ghcb_sw_exit_code = GHCB_SAVE_AREA_QWORD_OFFSET(sw_exit_code),
+	ghcb_sw_exit_info1 = GHCB_SAVE_AREA_QWORD_OFFSET(sw_exit_info1),
+	ghcb_sw_exit_info2 = GHCB_SAVE_AREA_QWORD_OFFSET(sw_exit_info2),
+	ghcb_sw_scratch	= GHCB_SAVE_AREA_QWORD_OFFSET(sw_scratch),
+} GHCB_REGISTER;
 
 bool amd_sev_es_enabled(void);
 efi_status_t setup_vc_handler(void);
@@ -82,6 +140,12 @@ void setup_ghcb_pte(pgd_t *page_table);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);
+void vmg_set_offset_valid(ghcb_page *ghcb, GHCB_REGISTER offset);
+void mem_fence(void);
+void vmgexit(ghcb_page *ghcb, u64 exit_code, u64 exit_info1,
+	     u64 exit_info2);
+uint64_t asm_read_cr4(void);
+uint64_t asm_xgetbv(uint32_t index);
 
 #endif /* CONFIG_EFI */
 
