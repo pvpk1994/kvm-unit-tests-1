@@ -14,6 +14,8 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "x86/vm.h"
+#include "alloc_page.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -89,9 +91,14 @@ static void test_stringio(void)
 int main(void)
 {
 	int rtn;
+	unsigned long *vaddr;
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
 	test_stringio();
+	setup_vm();
+	vaddr = alloc_page();
+	if (!vaddr)
+		assert_msg(vaddr, "Page allocation Failure");
 	return report_summary();
 }
