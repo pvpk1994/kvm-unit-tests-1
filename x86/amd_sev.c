@@ -33,7 +33,10 @@ static char st1[] = "abcdefghijklmnop";
 static void snp_set_page_shared(unsigned long paddr);
 static void set_page_decrypted_ghcb_msr(unsigned long vaddr);
 static void unset_c_bit_pte(unsigned long vaddr);
+static void snp_set_page_private(unsigned long paddr);
+static void set_page_encrypted_ghcb_msr(unsigned long vaddr);
 static void test_sev_snp_psc(void);
+static void set_c_bit_pte(unsigned long vaddr);
 
 static int test_sev_activation(void)
 {
@@ -382,6 +385,20 @@ static void __page_state_change(unsigned long paddr, enum psc_op op)
 	    GHCB_MSR_PSC_RESP_VAL(val)) {
 		return;
 	}
+
+	/*
+	 * If here: PSC is successful in RMP table, validate the page
+	 * in the guest so that it is consistent with the RMP entry
+	 */
+	if (op == SNP_PAGE_STATE_PRIVATE &&
+	    pvalidate(paddr, RMP_PG_SIZE_4K, 1)) {
+		return;
+	}
+}
+
+static void snp_set_page_private(unsigned long paddr)
+{
+	__page_state_change(paddr, SNP_PAGE_STATE_PRIVATE);
 }
 
 static void snp_set_page_shared(unsigned long paddr)
@@ -404,8 +421,23 @@ static void unset_c_bit_pte(unsigned long vaddr)
 	*pte &= ~(get_amd_sev_c_bit_mask());
 }
 
-static void clr_page_flags(pteval_t set, pteval_t clr,
-			   unsigned long vaddr)
+void set_c_bit_pte(unsigned long vaddr)
+{
+	pteval_t *pte;
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+	if (!pte) {
+		printf("WARNING: pte is null.\n");
+		assert(pte);
+	}
+
+	/* Set c-bit */
+	*pte |= get_amd_sev_c_bit_mask();
+}
+
+static void set_clr_page_flags(pteval_t set, pteval_t clr,
+			       unsigned long vaddr)
 {
 	if (clr & _PAGE_ENC) {
 		/*
@@ -413,7 +445,18 @@ static void clr_page_flags(pteval_t set, pteval_t clr,
 		 * page state in the RMP table.
 		 */
 		snp_set_page_shared(__pa(vaddr & PAGE_MASK));
+
+		flush_tlb();
 		unset_c_bit_pte(vaddr);
+		flush_tlb();
+	}
+
+	else if (set & _PAGE_ENC) {
+		flush_tlb();
+		set_c_bit_pte(vaddr);
+		flush_tlb();
+
+		snp_set_page_private(__pa(vaddr & PAGE_MASK));
 	}
 
 	flush_tlb();
@@ -421,7 +464,12 @@ static void clr_page_flags(pteval_t set, pteval_t clr,
 
 void set_page_decrypted_ghcb_msr(unsigned long vaddr)
 {
-	clr_page_flags(0, _PAGE_ENC, vaddr);
+	set_clr_page_flags(0, _PAGE_ENC, vaddr);
+}
+
+void set_page_encrypted_ghcb_msr(unsigned long vaddr)
+{
+	set_clr_page_flags(_PAGE_ENC, 0, vaddr);
 }
 
 static void test_sev_snp_activation(void)
@@ -488,6 +536,12 @@ static void test_sev_snp_psc(void)
 	printf("Address content: %s\n", (char *)vaddr);
 
 	set_page_decrypted_ghcb_msr((unsigned long)vaddr);
+
+	strcpy((char *)vaddr, st1);
+	printf("Address content: %s\n", (char *)vaddr);
+
+	/* Convert same page back from Shared => Private here */
+	set_page_encrypted_ghcb_msr((unsigned long)vaddr);
 
 	strcpy((char *)vaddr, st1);
 	printf("Address content: %s\n", (char *)vaddr);
