@@ -86,6 +86,40 @@ efi_status_t setup_amd_sev(void);
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
 #define VMGEXIT()		{ asm volatile("rep; vmmcall\n\r"); }
 
+#define GHCB_DATA_LOW		12
+#define GHCB_MSR_INFO_MASK	(BIT_ULL(GHCB_DATA_LOW) - 1)
+#define GHCB_RESP_CODE(v)	((v) & GHCB_MSR_INFO_MASK)
+
+/*
+ * SNP Page State Change Operation
+ *
+ * GHCBData[55:52] - Page operation:
+ *	0x0001	Page assignment, Private
+ *	0x0002	Page assignment, Shared
+ *	0x0003	PSMASH hint
+ *	0x0004	UNSMASH hint
+ */
+enum psc_op {
+	SNP_PAGE_STATE_PRIVATE = 1,
+	SNP_PAGE_STATE_SHARED =  2,
+};
+
+#define RMP_PG_SIZE_4K		0
+#define PAGE_SHIFT		12
+#define GHCB_MSR_PSC_REQ	0x14
+#define GHCB_MSR_PSC_REQ_GFN(gfn, op)				\
+	/* GHCBData[55:52] */					\
+	(((u64)((op) & 0xf) << 52)		|		\
+	/* GHCBData[51:12] */					\
+	((u64)((gfn) & GENMASK_ULL(39, 0)) << 12) |		\
+	/* GHCBData[11:0] */					\
+	GHCB_MSR_PSC_REQ)
+
+#define GHCB_MSR_PSC_RESP	0x15
+#define GHCB_MSR_PSC_RESP_VAL(val)		\
+	/* GHCBData[63:32] */			\
+	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
+
 typedef struct {
 	u8  reserved1[203];
 	u8  cpl;
@@ -146,6 +180,17 @@ void vmgexit(ghcb_page *ghcb, u64 exit_code, u64 exit_info1,
 	     u64 exit_info2);
 uint64_t asm_read_cr4(void);
 uint64_t asm_xgetbv(uint32_t index);
+/*
+ * Macros to generate condition code outputs from inline assembly,
+ * The output operand must be type "bool".
+ */
+#ifdef __GCC_ASM_FLAG_OUTPUTS__
+# define CC_SET(c) "\n\t/* output condition code " #c "*/\n"
+# define CC_OUT(c) "=@cc" #c
+#else
+# define CC_SET(c) "\n\tset" #c " %[_cc_" #c "]\n"
+# define CC_OUT(c)[_cc_ ## c] "=qm"
+#endif
 
 #endif /* CONFIG_EFI */
 
