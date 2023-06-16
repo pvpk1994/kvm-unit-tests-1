@@ -14,6 +14,7 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "alloc_page.h"
 #include "x86/vm.h"
 
 #define EXIT_SUCCESS 0
@@ -23,9 +24,16 @@
 
 #define CPUID_EXTENDED_STATE	0x0D
 
+#define _PAGE_ENC	(_AT(pteval_t, get_amd_sev_c_bit_mask()))
+
 struct cc_blob_sev_info *snp_cc_blob;
 
 static char st1[] = "abcdefghijklmnop";
+
+static void snp_set_page_shared(unsigned long paddr);
+static void set_page_decrypted_ghcb_msr(unsigned long vaddr);
+static void unset_c_bit_pte(unsigned long vaddr);
+static void test_sev_snp_psc(void);
 
 static int test_sev_activation(void)
 {
@@ -320,6 +328,102 @@ static efi_status_t test_sev_snp_cpuid(ghcb_page *ghcb)
 	return EFI_NOT_FOUND;
 }
 
+static inline int pvalidate(u64 vaddr, bool rmp_size,
+			    bool validate)
+{
+	bool rmp_unchanged;
+	int result;
+
+	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
+		     CC_SET(c)
+		     : CC_OUT(c) (rmp_unchanged), "=a" (result)
+		     : "a" (vaddr), "c" (rmp_size), "d" (validate)
+		     : "memory", "cc");
+
+	return rmp_unchanged ? 1 : result;
+}
+
+static void __page_state_change(unsigned long paddr, enum psc_op op)
+{
+	u64 val;
+
+	if (!(rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK))
+		return;
+
+	/* Save the old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/*
+	 * If action requested is to convert the page from private to
+	 * shared, then invalidate the page before we send it to
+	 * hypervisor to change the state of page in RMP table.
+	 */
+	if (op == SNP_PAGE_STATE_SHARED &&
+	    pvalidate(paddr, RMP_PG_SIZE_4K, 0)) {
+		/* Restore old GHCB MSR */
+		return;
+	}
+
+	/*
+	 * Now issue VMGEXIT to change the state of the page in RMP
+	 * table
+	 */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX,
+	      GHCB_MSR_PSC_REQ_GFN(paddr >> PAGE_SHIFT, op));
+
+	VMGEXIT();
+
+	val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/* Restore the old GHCB MSR */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+
+	if (GHCB_RESP_CODE(val) != GHCB_MSR_PSC_RESP ||
+	    GHCB_MSR_PSC_RESP_VAL(val)) {
+		return;
+	}
+}
+
+static void snp_set_page_shared(unsigned long paddr)
+{
+	__page_state_change(paddr, SNP_PAGE_STATE_SHARED);
+}
+
+static void unset_c_bit_pte(unsigned long vaddr)
+{
+	pteval_t *pte;
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+	if (!pte) {
+		printf("WARNING: pte is null.\n");
+		assert(pte);
+	}
+
+	/* unset c-bit */
+	*pte &= ~(get_amd_sev_c_bit_mask());
+}
+
+static void clr_page_flags(pteval_t set, pteval_t clr,
+			   unsigned long vaddr)
+{
+	if (clr & _PAGE_ENC) {
+		/*
+		 * If the encryption bit is to be cleared, change the
+		 * page state in the RMP table.
+		 */
+		snp_set_page_shared(__pa(vaddr & PAGE_MASK));
+		unset_c_bit_pte(vaddr);
+	}
+
+	flush_tlb();
+}
+
+void set_page_decrypted_ghcb_msr(unsigned long vaddr)
+{
+	clr_page_flags(0, _PAGE_ENC, vaddr);
+}
+
 static void test_sev_snp_activation(void)
 {
 	u32 vmpl_bits;
@@ -364,6 +468,31 @@ static void test_sev_snp_activation(void)
 	}
 }
 
+static void test_sev_snp_psc(void)
+{
+	unsigned long *vaddr;
+
+	if (!amd_sev_snp_enabled())
+		return;
+
+	vaddr = alloc_page();
+
+	if (!vaddr) {
+		printf("WARNING: Page not allocated!\n");
+		assert(vaddr);
+	}
+
+	force_4k_page(vaddr);
+	/* Perform Private <=> Shared page state change */
+	strcpy((char *)vaddr, st1);
+	printf("Address content: %s\n", (char *)vaddr);
+
+	set_page_decrypted_ghcb_msr((unsigned long)vaddr);
+
+	strcpy((char *)vaddr, st1);
+	printf("Address content: %s\n", (char *)vaddr);
+}
+
 static void test_stringio(void)
 {
 	int st1_len = sizeof(st1) - 1;
@@ -389,6 +518,7 @@ int main(void)
 	test_sev_es_activation();
 	setup_vm();
 	test_sev_snp_activation();
+	test_sev_snp_psc();
 	test_stringio();
 	return report_summary();
 }
