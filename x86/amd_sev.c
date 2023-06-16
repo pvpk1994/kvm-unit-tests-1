@@ -14,12 +14,15 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "alloc_page.h"
 #include "x86/vm.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
 
 #define TESTDEV_IO_PORT 0xe0
+
+extern phys_addr_t ghcb_addr;
 
 struct cc_blob_sev_info *snp_cc_blob;
 
@@ -92,6 +95,108 @@ static efi_status_t find_cc_blob_efi(void)
 	return EFI_SUCCESS;
 }
 
+static inline int pvalidate(u64 vaddr, bool rmp_size,
+			    bool validate)
+{
+	bool rmp_unchanged;
+	int result;
+
+	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
+		     CC_SET(c)
+		     : CC_OUT(c) (rmp_unchanged), "=a" (result)
+		     : "a" (vaddr), "c" (rmp_size), "d" (validate)
+		     : "memory", "cc");
+
+	return rmp_unchanged ? 1 : result;
+}
+
+static inline efi_status_t __page_state_change(unsigned long paddr,
+					       enum psc_op op)
+{
+	u64 val;
+
+	/* Save the old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/*
+	 * If action requested is to convert the page from private to
+	 * shared, then invalidate the page before we send it to
+	 * hypervisor to change the state of page in RMP table.
+	 */
+	if (op == SNP_PAGE_STATE_SHARED &&
+	    pvalidate(paddr, RMP_PG_SIZE_4K, 0))
+		return ES_UNSUPPORTED;
+
+	/*
+	 * Now issue VMGEXIT to change the state of the page in RMP
+	 * table
+	 */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX,
+	      GHCB_MSR_PSC_REQ_GFN(paddr >> PAGE_SHIFT, op));
+
+	VMGEXIT();
+
+	val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/* Restore the old GHCB MSR */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+
+	if (GHCB_RESP_CODE(val) != GHCB_MSR_PSC_RESP ||
+	    GHCB_MSR_PSC_RESP_VAL(val)) {
+		return ES_VMM_ERROR;
+	}
+
+	/*
+	 * PSC is successful in the RMP table, validate the page in the
+	 * guest so that it is consistent with the RMP entry.
+	 */
+	if (op == SNP_PAGE_STATE_PRIVATE &&
+	    pvalidate(paddr, RMP_PG_SIZE_4K, 1)) {
+		return ES_UNSUPPORTED;
+	}
+
+	return ES_OK;
+}
+
+static inline efi_status_t snp_set_page_shared_ghcb_msr(unsigned long paddr)
+{
+	return __page_state_change(paddr, SNP_PAGE_STATE_SHARED);
+}
+
+static inline void unset_c_bit_pte(unsigned long vaddr)
+{
+	pteval_t *pte;
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+	if (!pte) {
+		printf("WARNING: pte is null.\n");
+		assert(pte);
+	}
+
+	/* unset c-bit */
+	*pte &= ~(get_amd_sev_c_bit_mask());
+}
+
+static inline void set_page_decrypted(unsigned long vaddr)
+{
+	efi_status_t status;
+
+	/*
+	 * If the encryption bit is to be cleared, change the page state
+	 * in the RMP table.
+	 */
+	status = snp_set_page_shared_ghcb_msr(__pa(vaddr & PAGE_MASK));
+	if (status != ES_OK) {
+		printf("Page state change (Private->Shared) failure.\n");
+		return;
+	}
+
+	flush_tlb();
+	unset_c_bit_pte(vaddr);
+	flush_tlb();
+}
+
 static void test_sev_snp_activation(void)
 {
 	efi_status_t status;
@@ -127,6 +232,44 @@ static void test_stringio(void)
 	report((got & 0xff00) >> 8 == st1[sizeof(st1) - 2], "outsb up");
 }
 
+static void test_page_state_change(void)
+{
+	pteval_t *pte;
+	unsigned long *vaddr;
+
+	if (!amd_sev_snp_enabled())
+		return;
+
+	vaddr = alloc_page();
+	if (!vaddr) {
+		printf("Page allocation failure.\n");
+		return;
+	}
+
+	/*
+	 * Page state change using GHCB MSR protocol can only happen on
+	 * 4K page.
+	 */
+	force_4k_page(vaddr);
+	pte = get_pte_level((pgd_t *)read_cr3(), (void *)vaddr, 1);
+	if (pte == NULL) {
+		printf("No pte found.\n");
+		return;
+	}
+
+	if (*pte & get_amd_sev_c_bit_mask()) {
+		printf("Private->Shared conversion test.\n");
+		/* Perform Private->Shared page state change */
+		strcpy((char *)vaddr, st1);
+		report(!strcmp((char *)vaddr, st1), "Write to encrypted page before private->shared conversion");
+
+		set_page_decrypted((unsigned long)vaddr);
+
+		strcpy((char *)vaddr, st1);
+		report(!strcmp((char *)vaddr, st1), "Write to unencrypted page after private->shared conversion");
+	}
+}
+
 int main(void)
 {
 	int rtn;
@@ -136,5 +279,6 @@ int main(void)
 	test_sev_snp_activation();
 	test_stringio();
 	setup_vm();
+	test_page_state_change();
 	return report_summary();
 }
