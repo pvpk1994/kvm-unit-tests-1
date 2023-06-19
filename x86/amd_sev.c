@@ -15,6 +15,7 @@
 #include "x86/amd_sev.h"
 #include "msr.h"
 #include "x86/xsave.h"
+#include "alloc.h"
 #include "alloc_page.h"
 #include "x86/vm.h"
 
@@ -406,6 +407,165 @@ static inline void set_page_encrypted_ghcb_msr(unsigned long vaddr)
 	set_clr_page_flags(_PAGE_ENC, 0, vaddr);
 }
 
+static int verify_exception(struct ghcb *ghcb)
+{
+	return ghcb->save.sw_exit_info_1 & GENMASK_ULL(31, 0);
+}
+
+static inline int sev_ghcb_hv_call(struct ghcb *ghcb, u64 exit_code,
+				   u64 exit_info_1, u64 exit_info_2)
+{
+	ghcb->protocol_version = GHCB_PROTOCOL_MAX;
+	ghcb->ghcb_usage = GHCB_DEFAULT_USAGE;
+
+	ghcb_set_sw_exit_code(ghcb, exit_code);
+	ghcb_set_sw_exit_info_1(ghcb, exit_info_1);
+	ghcb_set_sw_exit_info_2(ghcb, exit_info_2);
+
+	VMGEXIT();
+
+	return verify_exception(ghcb);
+}
+
+static int vmgexit_psc(struct snp_psc_desc *desc, struct ghcb *ghcb)
+{
+	int cur_entry, end_entry, ret = 0;
+	struct snp_psc_desc *data;
+
+	data = (struct snp_psc_desc *)ghcb->shared_buffer;
+	memcpy(ghcb->shared_buffer, desc, sizeof(*desc));
+
+	cur_entry = data->hdr.cur_entry;
+	end_entry = data->hdr.end_entry;
+
+	while (data->hdr.cur_entry <= data->hdr.end_entry) {
+		ghcb_set_sw_scratch(ghcb, (uint64_t)__pa(data));
+
+		ret = sev_ghcb_hv_call(ghcb, SVM_VMGEXIT_PSC, 0, 0);
+
+		if (ret || ghcb->save.sw_exit_info_2) {
+			printf("SNP: PSC failed ret=%d exit_info_2=%lx\n",
+			       ret, ghcb->save.sw_exit_info_2);
+			ret = 1;
+			break;
+		}
+
+		if (data->hdr.reserved) {
+			printf("Reserved bit is set in the PSC header\n");
+			ret = 1;
+			break;
+		}
+
+		if (data->hdr.end_entry > end_entry ||
+		    cur_entry > data->hdr.cur_entry) {
+			printf("SNP: PSC processing going backward, end_entry %d (got %d) cur_entry %d (got %d)\n",
+			       end_entry, data->hdr.end_entry,
+			       cur_entry, data->hdr.cur_entry);
+			ret = 1;
+			break;
+		}
+
+		printf("cur_entry: %d end_entry: %d\n",
+		       data->hdr.cur_entry, data->hdr.end_entry);
+	}
+
+	return ret;
+}
+
+static efi_status_t  __set_pages_state(struct snp_psc_desc *data, unsigned long vaddr,
+				       unsigned long vaddr_end, int op,
+				       struct ghcb *ghcb)
+{
+	struct psc_hdr *hdr;
+	struct psc_entry *entries;
+	unsigned long pfn;
+	int iter = 0;
+	unsigned long vaddr_start = vaddr;
+
+	hdr = &data->hdr;
+	entries = data->entries;
+
+	memset(data, 0, sizeof(*data));
+
+	for (iter = 0; vaddr_start < vaddr_end; entries++, iter++) {
+		pfn = __pa(vaddr_start) >> PAGE_SHIFT;
+		entries->gfn = pfn;
+		entries->operation = op;
+		entries->pagesize = RMP_PG_SIZE_4K;
+		vaddr_start += PAGE_SIZE;
+	}
+	hdr->end_entry = iter;
+
+	if (vmgexit_psc(data, ghcb))
+		return ES_VMM_ERROR;
+
+	return ES_OK;
+}
+
+static void set_pages_state(unsigned long vaddr, unsigned int npages,
+			    int op, struct ghcb *ghcb)
+{
+	unsigned long vaddr_next, vaddr_end;
+	unsigned long vaddr_start = __pa(vaddr & PAGE_MASK);
+	struct snp_psc_desc *desc;
+
+	desc = malloc(sizeof(*desc));
+	if (!desc) {
+		printf("WARNING: Failed to allocate memory for PSC descriptor.\n");
+		return;
+	}
+
+	vaddr_end = vaddr_start + (npages * PAGE_SIZE);
+
+	/*
+	 * Calculate the last vaddr that can fit in PSC_MAX_ENTRY's
+	 * struct snp_psc_desc.
+	 */
+	while (vaddr_start < vaddr_end) {
+		vaddr_next = MIN(vaddr_end,
+				 (VMGEXIT_PSC_MAX_ENTRY * PAGE_SIZE) + vaddr_start);
+
+		__set_pages_state(desc, vaddr_start, vaddr_next, op, ghcb);
+
+		vaddr_start = vaddr_next;
+	}
+
+	free(desc);
+}
+
+static efi_status_t pvalidate_pages(unsigned long vaddr, unsigned int npages,
+				    bool validate)
+{
+	unsigned long vaddr_start, vaddr_end;
+	int pvalidate_result;
+
+	/* Compute the last address */
+	vaddr_start = __pa(vaddr & PAGE_MASK);
+	vaddr_end = vaddr_start + (npages * PAGE_SIZE);
+
+	/* Issue pvaldiate on every single page */
+	while (vaddr_start < vaddr_end) {
+		pvalidate_result = pvalidate(vaddr_start, RMP_PG_SIZE_4K,
+					     validate);
+
+		if (pvalidate_result)
+			return ES_UNSUPPORTED;
+
+		vaddr_start += PAGE_SIZE;
+	}
+
+	return ES_OK;
+}
+
+static inline void snp_set_memory_shared_ghcb_nae(unsigned long vaddr,
+						  unsigned int npages, struct ghcb *ghcb)
+{
+	/* Invalidate all the pages before turning them to shared */
+	pvalidate_pages(vaddr, npages, false);
+
+	set_pages_state(vaddr, npages, SNP_PAGE_STATE_SHARED, ghcb);
+}
+
 static void test_sev_snp_activation(void)
 {
 	efi_status_t status;
@@ -432,9 +592,24 @@ static void test_sev_snp_activation(void)
 	}
 }
 
+static void test_read_write(unsigned long paddr, int num_pages, int op)
+{
+	int iter;
+	unsigned long addr_start = paddr;
+
+	for (iter = 0; iter < num_pages; iter++) {
+		strcpy((char *)&addr_start, st1);
+		if (op == SNP_PAGE_STATE_SHARED)
+			printf("Shared page %d's content: %s\n", iter + 1,
+			       (char *)&addr_start);
+
+		addr_start += PAGE_SIZE;
+	}
+}
+
 static inline void test_sev_snp_psc(void)
 {
-	unsigned long *vaddr;
+	unsigned long *vaddr, *vm_pages;
 
 	if (!amd_sev_snp_enabled())
 		return;
@@ -461,6 +636,16 @@ static inline void test_sev_snp_psc(void)
 
 	strcpy((char *)vaddr, st1);
 	printf("Address content: %s\n", (char *)vaddr);
+
+	/* Allocate 4 (1<<2) pages for testing */
+	vm_pages = alloc_pages(2);
+
+	force_4k_page(vm_pages);
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	/* Page State Changes - Private to Shared */
+	snp_set_memory_shared_ghcb_nae((unsigned long)vm_pages, 4, ghcb);
+	test_read_write((unsigned long)vm_pages, 4, SNP_PAGE_STATE_SHARED);
 }
 
 static void test_stringio(void)
