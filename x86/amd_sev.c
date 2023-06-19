@@ -41,6 +41,9 @@ static void set_c_bit_pte(unsigned long vaddr);
 static void snp_set_memory_shared_ghcb_nae(unsigned long vaddr,
 					   unsigned int npages,
 					   ghcb_page *ghcb);
+static void snp_set_memory_private_ghcb_nae(unsigned long vaddr,
+					    unsigned int npages,
+					    ghcb_page *ghcb);
 
 static int test_sev_activation(void)
 {
@@ -650,6 +653,15 @@ void snp_set_memory_shared_ghcb_nae(unsigned long vaddr, unsigned int npages,
 	set_pages_state(vaddr, npages, SNP_PAGE_STATE_SHARED, ghcb);
 }
 
+void snp_set_memory_private_ghcb_nae(unsigned long vaddr, unsigned int npages,
+				     ghcb_page *ghcb)
+{
+	/* pvalidate all the pages after turning them to private */
+	set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE, ghcb);
+
+	pvalidate_pages(vaddr, npages, true);
+}
+
 static void test_sev_snp_activation(void)
 {
 	u32 vmpl_bits;
@@ -704,6 +716,9 @@ static void test_read_write(unsigned long paddr, int num_pages, int op)
 		if (op == SNP_PAGE_STATE_SHARED)
 			printf("Shared page %d's content: %s\n", iter + 1,
 			       (char *)&addr_start);
+		else
+			printf("Private page %d's content: %s\n", iter + 1,
+			       (char *)&addr_start);
 
 		addr_start += PAGE_SIZE;
 	}
@@ -748,6 +763,11 @@ static void test_sev_snp_psc(void)
 	/* Page State Changes - Private to Shared */
 	snp_set_memory_shared_ghcb_nae((unsigned long)vm_pages, 4, ghcb);
 	test_read_write((unsigned long)vm_pages, 4, SNP_PAGE_STATE_SHARED);
+
+	/* Page state changes - Shared to Private */
+	snp_set_memory_private_ghcb_nae((unsigned long)vm_pages, 4, ghcb);
+	test_read_write((unsigned long)vm_pages, 4,
+			SNP_PAGE_STATE_PRIVATE);
 }
 
 static void test_stringio(void)
