@@ -18,6 +18,7 @@
 #include "desc.h"
 #include "asm/page.h"
 #include "efi.h"
+#include "processor.h"
 
 /*
  * AMD SEV Confidential computing blob structure. The structure is
@@ -78,6 +79,7 @@ efi_status_t setup_amd_sev(void);
  */
 #define SEV_ES_VC_HANDLER_VECTOR 29
 #define SVM_EXIT_CPUID  0x72ULL
+#define SVM_VMGEXIT_PSC	0x80000010
 
 /*
  * AMD Programmer's Manual Volume 2
@@ -85,10 +87,12 @@ efi_status_t setup_amd_sev(void);
  */
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
 #define VMGEXIT()		{ asm volatile("rep; vmmcall\n\r"); }
+#define VMGEXIT_PSC_MAX_ENTRY	253
 
 #define GHCB_DATA_LOW		12
 #define GHCB_MSR_INFO_MASK	(BIT_ULL(GHCB_DATA_LOW) - 1)
 #define GHCB_RESP_CODE(v)	((v) & GHCB_MSR_INFO_MASK)
+#define GHCB_DEFAULT_USAGE	0ULL
 
 /*
  * SNP Page State Change Operation
@@ -166,6 +170,25 @@ typedef enum {
 	ghcb_sw_exit_info2 = GHCB_SAVE_AREA_QWORD_OFFSET(sw_exit_info2),
 	ghcb_sw_scratch	= GHCB_SAVE_AREA_QWORD_OFFSET(sw_scratch),
 } GHCB_REGISTER;
+
+struct psc_hdr {
+	u16 cur_entry;
+	u16 end_entry;
+	u32 reserved;
+};
+
+struct psc_entry {
+	u64 cur_page	: 12;
+	u64 gfn		: 40;
+	u64 operation	: 4;
+	u64 pagesize	: 1;
+	u64 reserved	: 7;
+};
+
+struct snp_psc_desc {
+	struct psc_hdr hdr;
+	struct psc_entry entries[VMGEXIT_PSC_MAX_ENTRY];
+};
 
 bool amd_sev_es_enabled(void);
 efi_status_t setup_vc_handler(void);
