@@ -808,6 +808,13 @@ static inline int test_bit(int nr, const volatile unsigned long *addr)
 	return (*word & mask) != 0;
 }
 
+static inline u64 lower_bits(u64 val, unsigned int bits)
+{
+	u64 mask = (1ULL << bits) - 1;
+
+	return (val & mask);
+}
+
 static inline void flush_tlb(void)
 {
 	ulong cr4;
