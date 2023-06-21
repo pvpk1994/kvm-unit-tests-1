@@ -42,6 +42,9 @@ OBJDIRS += $(LIBFDT_objdir)
 ifeq ($(CONFIG_EFI),y)
 EFI_ARCH = x86_64
 EFI_CFLAGS := -DCONFIG_EFI
+ifeq ($(AMDSEV_EFI_VC),y)
+EFI_CFLAGS += -DAMDSEV_EFI_VC
+endif
 # The following CFLAGS and LDFLAGS come from:
 #   - GNU-EFI/Makefile.defaults
 #   - GNU-EFI/apps/Makefile
