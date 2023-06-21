@@ -1,0 +1,23 @@
+README
+======
+
+lib/x86/insn/ contains x86 instruction decoder src from Linux.
+
+The following files were taken as-is from Linux@6d7d0603ca and
+adapted to build with kvm-unit-tests source:
+- U: lib/x86/insn/gen-insn-attr-x86.awk
+- I: lib/x86/insn/inat.c
+- I: lib/x86/insn/inat.h
+- I: lib/x86/insn/inat_types.h
+- I: lib/x86/insn/insn.c
+- I: lib/x86/insn/insn.h
+- U: lib/x86/insn/x86-opcode-map.txt
+
+U: Unmodified, except source attribution.
+I: Modified for #include path fixup.
+
+lib/x86/insn/insn_glue.h contains additional code from Linux that
+is relevant to the insn decoder, and not required elsewhere by
+kvm-unit-tests. These definitions are placed in a separate file to
+keep the diff between Linux and kvm-unit-tests's insn decoder copy
+minimal.

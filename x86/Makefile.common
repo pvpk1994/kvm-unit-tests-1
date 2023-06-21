@@ -26,6 +26,8 @@ cflatobjs += lib/x86/pmu.o
 ifeq ($(CONFIG_EFI),y)
 cflatobjs += lib/x86/amd_sev.o
 cflatobjs += lib/x86/amd_sev_vc.o
+cflatobjs += lib/x86/insn/insn.o
+cflatobjs += lib/x86/insn/inat.o
 cflatobjs += lib/efi.o
 cflatobjs += x86/efi/reloc_x86_64.o
 endif
@@ -49,7 +51,14 @@ FLATLIBS = lib/libcflat.a
 ifeq ($(CONFIG_EFI),y)
 .PRECIOUS: %.efi %.so
 
-%.so: %.o $(FLATLIBS) $(SRCDIR)/x86/efi/elf_x86_64_efi.lds $(cstart.o)
+inat_tables_script = $(SRCDIR)/lib/x86/insn/gen-insn-attr-x86.awk
+inat_tables_maps = $(SRCDIR)/lib/x86/insn/x86-opcode-map.txt
+inat_tables_c = $(SRCDIR)/lib/x86/insn/inat-tables.c
+
+$(inat_tables_c): $(inat_tables_script) $(inat_tables_maps)
+	awk -f $(inat_tables_script) $(inat_tables_maps) > $@
+
+%.so: $(inat_tables_c) %.o $(FLATLIBS) $(SRCDIR)/x86/efi/elf_x86_64_efi.lds $(cstart.o)
 	$(LD) -T $(SRCDIR)/x86/efi/elf_x86_64_efi.lds $(EFI_LDFLAGS) -o $@ \
 		$(filter %.o, $^) $(FLATLIBS)
 	@chmod a-x $@
@@ -125,4 +134,5 @@ arch_clean:
 	$(RM) $(TEST_DIR)/*.o $(TEST_DIR)/*.flat $(TEST_DIR)/*.elf \
 	$(TEST_DIR)/.*.d lib/x86/.*.d \
 	$(TEST_DIR)/efi/*.o $(TEST_DIR)/efi/.*.d \
-	$(TEST_DIR)/*.so $(TEST_DIR)/*.efi
+	$(TEST_DIR)/*.so $(TEST_DIR)/*.efi \
+	$(inat_tables_c) lib/x86/insn/.*.d
