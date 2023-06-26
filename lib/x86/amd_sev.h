@@ -124,10 +124,21 @@ enum psc_op {
 	/* GHCBData[63:32] */			\
 	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
 
+/* GHCB Hypervisor Feature request/response */
+#define GHCB_MSR_HV_FT_REQ	0x080
+#define GHCB_MSR_HV_FT_RESP	0x081
+#define GHCB_MSR_HV_FT_RESP_VAL(v)		\
+	/* GHCBData[63:32] */			\
+	(((u64)(v) & GENMASK_ULL(63, 12)) >> 12)
+
+#define GHCB_HV_FT_SNP			BIT_ULL(0)
+#define GHCB_HV_FT_SNP_AP_CREATION	BIT_ULL(1)
+
 typedef struct {
 	u8  reserved1[203];
 	u8  cpl;
 	u8  reserved8[300];
+	// u64 xss;
 	u64 rax;
 	u8  reserved4[264];
 	u64 rcx;
@@ -160,6 +171,7 @@ typedef struct {
 
 typedef enum {
 	ghcb_cpl	= GHCB_SAVE_AREA_QWORD_OFFSET(cpl),
+	// ghcb_xss	= GHCB_SAVE_AREA_QWORD_OFFSET(xss),
 	ghcb_rax	= GHCB_SAVE_AREA_QWORD_OFFSET(rax),
 	ghcb_rbx	= GHCB_SAVE_AREA_QWORD_OFFSET(rbx),
 	ghcb_rcx	= GHCB_SAVE_AREA_QWORD_OFFSET(rcx),
@@ -203,6 +215,8 @@ void vmgexit(ghcb_page *ghcb, u64 exit_code, u64 exit_info1,
 	     u64 exit_info2);
 uint64_t asm_read_cr4(void);
 uint64_t asm_xgetbv(uint32_t index);
+u64 get_hv_features(ghcb_page *ghcb);
+
 /*
  * Macros to generate condition code outputs from inline assembly,
  * The output operand must be type "bool".

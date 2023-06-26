@@ -151,6 +151,7 @@ void smp_init(void)
 	set_idt_entry(IPI_VECTOR, ipi_entry, 0);
 
 	setup_smp_id(0);
+	printf("CPU count: %d\n", cpu_count());
 	for (i = 1; i < cpu_count(); ++i)
 		on_cpu(i, setup_smp_id, 0);
 
@@ -285,6 +286,7 @@ void bringup_aps(void)
 	_cpu_count = fwcfg_get_nb_cpus();
 
 	printf("smp: waiting for %d APs\n", _cpu_count - 1);
+	printf("CPU online count: %d\n", atomic_read(&cpu_online_count));
 	while (_cpu_count != atomic_read(&cpu_online_count))
 		cpu_relax();
 }

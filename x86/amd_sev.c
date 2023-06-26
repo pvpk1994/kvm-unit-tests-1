@@ -770,6 +770,14 @@ static void test_sev_snp_psc(void)
 			SNP_PAGE_STATE_PRIVATE);
 }
 
+static void test_sev_snp_ap(ghcb_page *ghcb)
+{
+	if ((get_hv_features(ghcb) & GHCB_HV_FT_SNP_AP_CREATION)) {
+		printf("Hypervisor feature not supported.\n");
+		return;
+	}
+}
+
 static void test_stringio(void)
 {
 	int st1_len = sizeof(st1) - 1;
@@ -796,6 +804,8 @@ int main(void)
 	setup_vm();
 	test_sev_snp_activation();
 	test_sev_snp_psc();
+	ghcb_page *ghcb = (ghcb_page *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+	test_sev_snp_ap(ghcb);
 	test_stringio();
 	return report_summary();
 }
