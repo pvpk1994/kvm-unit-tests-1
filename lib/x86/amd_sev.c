@@ -234,6 +234,30 @@ void mem_fence(void)
 	__asm__ __volatile__("":::"memory");
 }
 
+/* Hypervisor features are available from GHCB version 2 */
+u64 get_hv_features(ghcb_page *ghcb)
+{
+	u64 val;
+
+	if (ghcb->protocol_version < 2)
+		return 0;
+
+	/* Save old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, GHCB_MSR_HV_FT_REQ);
+	VMGEXIT();
+
+	val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+	/* Restore old GHCB MSR */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+
+	if (GHCB_RESP_CODE(val) != GHCB_MSR_HV_FT_RESP)
+		return 0;
+
+	return GHCB_MSR_HV_FT_RESP_VAL(val);
+}
+
 void vmgexit(ghcb_page *ghcb, u64 exit_code,
 	     u64 exit_info1, u64 exit_info2)
 {

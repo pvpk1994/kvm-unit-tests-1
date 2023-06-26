@@ -174,7 +174,7 @@ void setup_multiboot(struct mbi_bootinfo *bi)
 static void setup_gdt_tss(void)
 {
 	size_t tss_offset;
-
+	printf("%s\n", __func__);
 	/* 64-bit setup_tss does not use the stacktop argument.  */
 	tss_offset = setup_tss(NULL);
 	load_gdt_tss(tss_offset);
