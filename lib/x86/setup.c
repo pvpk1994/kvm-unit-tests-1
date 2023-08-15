@@ -408,7 +408,13 @@ void ap_start64(void)
 
 void bsp_rest_init(void)
 {
-	bringup_aps();
+	if (amd_sev_snp_enabled() && fwcfg_get_nb_cpus() > 1) {
+		printf("BSP APIC ID: %u\n", pre_boot_apic_id());
+		setup_vc_handler();
+		bringup_snp_aps();
+	}
+	else
+		bringup_aps();
 	enable_x2apic();
 	smp_init();
 	pmu_init();
