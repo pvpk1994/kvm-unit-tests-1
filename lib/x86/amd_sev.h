@@ -134,6 +134,64 @@ enum psc_op {
 #define GHCB_HV_FT_SNP			BIT_ULL(0)
 #define GHCB_HV_FT_SNP_AP_CREATION	BIT_ULL(1)
 
+/* VMSA page bit */
+#define RMPADJUST_VMSA_PAGE_BIT		BIT(16)
+
+/* VMGEXIT related events for AP */
+#define SVM_VMGEXIT_AP_CREATION		0x80000013
+#define SVM_VMGEXIT_AP_INIT		0
+#define SVM_VMGEXIT_AP_CREATE		1
+#define SVM_VMGEXIT_AP_DESTROY		2
+
+/* VMCB segment */
+struct vmcb_seg {
+	u16 selector;
+	u16 attrib;
+	u32 limit;
+	u64 base;
+} __packed;
+
+/* Save area definition for SEV-ES and SEV-SNP guests */
+struct sev_es_save_area {
+	struct vmcb_seg es;
+	struct vmcb_seg cs;
+	struct vmcb_seg ss;
+	struct vmcb_seg ds;
+	struct vmcb_seg fs;
+	struct vmcb_seg gs;
+	struct vmcb_seg gdtr;
+	struct vmcb_seg ldtr;
+	struct vmcb_seg idtr;
+	struct vmcb_seg tr;
+	u8 reserved_0xc8[2];
+	u8 vmpl;
+	u8 reserved_0xcc[4];
+	u64 efer;
+	u8 reserved_0xd8[104];
+	u64 cr4;
+	u64 cr0;
+	u64 dr7;
+	u64 dr6;
+	u64 rflags;
+	u64 rip;
+	u8 reserved_0x1c0[24];
+	u8 reserved_0x248[32];
+	u64 g_pat;
+	u8 reserved_0x298[80];
+	u8 reserved_0x2f0[24];
+	u64 reserved_0x320;	/* rsp already available at 0x01d8 */
+	u8 reserved_0x380[16];
+	u64 sev_features;
+	u8 reserved_0x3f0[16];
+
+	/* Floating point area */
+	u64 x87_dp;
+	u64 xcr0;
+	u32 mxcsr;
+	u16 x87_ftw;
+	u16 x87_fcw;
+}__packed;
+
 typedef struct {
 	u8  reserved1[203];
 	u8  cpl;
@@ -216,6 +274,7 @@ void vmgexit(ghcb_page *ghcb, u64 exit_code, u64 exit_info1,
 uint64_t asm_read_cr4(void);
 uint64_t asm_xgetbv(uint32_t index);
 u64 get_hv_features(ghcb_page *ghcb);
+void bringup_snp_aps(void);
 
 /*
  * Macros to generate condition code outputs from inline assembly,
@@ -228,6 +287,39 @@ u64 get_hv_features(ghcb_page *ghcb);
 # define CC_SET(c) "\n\tset" #c " %[_cc_" #c "]\n"
 # define CC_OUT(c)[_cc_ ## c] "=qm"
 #endif
+
+static inline int rmpadjust(unsigned long vaddr, bool rmp_pg_size,
+			    unsigned long attrs)
+{
+	int ret;
+
+	__asm__ __volatile__(".byte 0xF3, 0x0F, 0x01, 0xFE\n\t"
+			      : "=a"(ret)
+			      : "a"(vaddr), "c"(rmp_pg_size),  "d"(attrs)
+			      : "memory", "cc");
+
+	return ret;
+}
+
+static inline bool constant_test_bit(int nr, const void *addr)
+{
+	const u32 *p = addr;
+	return ((1UL << (nr & 31)) & (p[nr >> 5])) != 0;
+}
+static inline bool variable_test_bit(int nr, const void *addr)
+{
+	bool v;
+	const u32 *p = addr;
+
+	asm("btl %2,%1" CC_SET(c) : CC_OUT(c) (v) : "m" (*p), "Ir" (nr));
+	return v;
+}
+
+#define test_bit(nr,addr) (__builtin_constant_p(nr) ? \
+ 			   constant_test_bit((nr),(addr)) : \
+ 			   variable_test_bit((nr),(addr)))
+
+void vc_invalidate_ghcb(ghcb_page *ghcb);
 
 #endif /* CONFIG_EFI */
 
