@@ -13,6 +13,7 @@
 #include "x86/processor.h"
 #include "x86/vm.h"
 #include "alloc_page.h"
+#include "vmalloc.h"
 #include "apic.h"
 #include "smp.h"
 
@@ -54,7 +55,7 @@
 #define INIT_TR_ATTRIBS		(SVM_SELECTOR_P_MASK | 3)
 
 static unsigned short amd_sev_c_bit_pos;
-static struct percpu_data __percpu_data[MAX_TEST_CPUS];
+//static struct percpu_data __percpu_data[MAX_TEST_CPUS];
 
 u64 asm_read_cr4(void)
 {
@@ -352,11 +353,12 @@ void vc_invalidate_ghcb(ghcb_page *ghcb)
 	       sizeof(ghcb->save_area.valid_bitmap));
 }
 
-void bringup_snp_aps(void)
+void bringup_snp_aps()
 {
 	int ret;
 	u64 cr4;
 	struct sev_es_save_area *vmsa;
+	unsigned long *vaddr;
 
 	ghcb_page *ghcb = (ghcb_page *)rdmsr(SEV_ES_GHCB_MSR_INDEX);
 
@@ -372,11 +374,20 @@ void bringup_snp_aps(void)
 
 	/*
 	 * TODO: Account for VMSA related SNP erratum
-	 * This erratum exists for large pages (2M/1G)
+	 * This erratum e.xists for large pages (2M/1G)
 	 * Issuing a force_4k_page() should resolve the issue?
 	 */
-	vmsa = (struct sev_es_save_area *)alloc_page();
+	vaddr = alloc_page();
+	printf("vaddr page: 0x%lx, 0x%lx\n", (unsigned long)vaddr, 
+		__pa(vaddr));
+	vmsa = (struct sev_es_save_area *)(vaddr);
 	force_4k_page(vmsa);
+
+	if (!IS_ALIGNED((phys_addr_t)vmsa, PAGE_SIZE)) {
+		printf("VMSA page is NOT 4k boundary aligned.\n");
+		return;
+	}
+	//PAGE_ALIGN(vmsa);
 
 	if (!vmsa) {
 		printf("VMSA page not allocated!\n");
@@ -395,7 +406,8 @@ void bringup_snp_aps(void)
 	vmsa->cs.limit 		= AP_INIT_CS_LIMIT;
 	vmsa->cs.attrib 	= INIT_CS_ATTRIBS;
 	vmsa->cs.selector 	= 0;
-	vmsa->rip 		= 0x0;
+
+	vmsa->rip 		= 0;
 
 	vmsa->ds.limit 		= AP_INIT_DS_LIMIT;
 	vmsa->ds.attrib 	= INIT_DS_ATTRIBS;
@@ -412,7 +424,8 @@ void bringup_snp_aps(void)
 	vmsa->tr.attrib		= INIT_TR_ATTRIBS;
 
 	vmsa->cr4		= cr4;
-	vmsa->cr0		= AP_INIT_CR0_DEFAULT;
+//	vmsa->cr0		= AP_INIT_CR0_DEFAULT;
+	vmsa->cr0		= 0x10;
 	vmsa->dr7		= AP_DR7_RESET;
 	vmsa->dr6		= AP_INIT_DR6_DEFAULT;
 	vmsa->rflags		= AP_INIT_RFLAGS_DEFAULT;
@@ -442,13 +455,13 @@ void bringup_snp_aps(void)
 		return;
 	}
 
-	wrmsr(MSR_GS_BASE, (u64)&__percpu_data[0x1]);
+//	wrmsr(MSR_GS_BASE, (u64)&__percpu_data[0x1]);
 //	irq_disable();
 
 	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
 
 	irq_disable();
-	vc_invalidate_ghcb(ghcb);
+//	vc_invalidate_ghcb(ghcb);
 	vmg_set_offset_valid(ghcb, ghcb_rax);
 	ghcb->save_area.rax = vmsa->sev_features;
 
@@ -456,9 +469,9 @@ void bringup_snp_aps(void)
 	ghcb->save_area.sw_exit_code = SVM_VMGEXIT_AP_CREATION;
 
 //	if (apic_id() !=0) {
-		vmg_set_offset_valid(ghcb, ghcb_sw_exit_info1);
-		ghcb->save_area.sw_exit_info1 = ((u64)0x1 << 32 |
-						SVM_VMGEXIT_AP_CREATE);
+	vmg_set_offset_valid(ghcb, ghcb_sw_exit_info1);
+	ghcb->save_area.sw_exit_info1 = ((u64)0x1 << 32 |
+					SVM_VMGEXIT_AP_CREATE);
 //	}
 	vmg_set_offset_valid(ghcb, ghcb_sw_exit_info2);
 	ghcb->save_area.sw_exit_info2 = __pa(vmsa);

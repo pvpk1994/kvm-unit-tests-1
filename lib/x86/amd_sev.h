@@ -152,6 +152,7 @@ struct vmcb_seg {
 } __packed;
 
 /* Save area definition for SEV-ES and SEV-SNP guests */
+/*
 struct sev_es_save_area {
 	struct vmcb_seg es;
 	struct vmcb_seg cs;
@@ -163,34 +164,145 @@ struct sev_es_save_area {
 	struct vmcb_seg ldtr;
 	struct vmcb_seg idtr;
 	struct vmcb_seg tr;
-	u8 reserved_0xc8[2];
+//	u8 reserved_0xc8[2];
 	u8 vmpl;
-	u8 reserved_0xcc[4];
+//	u8 reserved_0xcc[4];
 	u64 efer;
-	u8 reserved_0xd8[104];
+//	u8 reserved_0xd8[104];
 	u64 cr4;
 	u64 cr0;
 	u64 dr7;
 	u64 dr6;
 	u64 rflags;
 	u64 rip;
-	u8 reserved_0x1c0[24];
-	u8 reserved_0x248[32];
+//	u8 reserved_0x1c0[24];
+//	u8 reserved_0x248[32];
 	u64 g_pat;
-	u8 reserved_0x298[80];
-	u8 reserved_0x2f0[24];
-	u64 reserved_0x320;	/* rsp already available at 0x01d8 */
-	u8 reserved_0x380[16];
+//	u8 reserved_0x298[80];
+//	u8 reserved_0x2f0[24];
+//	u64 reserved_0x320;	// rsp already available at 0x01d8
+//	u8 reserved_0x380[16];
 	u64 sev_features;
-	u8 reserved_0x3f0[16];
+//	u8 reserved_0x3f0[16];
 
-	/* Floating point area */
+	// Floating point area
 	u64 x87_dp;
 	u64 xcr0;
 	u32 mxcsr;
 	u16 x87_ftw;
 	u16 x87_fcw;
 }__packed;
+*/
+
+/* Save area definition for SEV-ES and SEV-SNP guests */
+struct sev_es_save_area {
+	struct vmcb_seg es;
+	struct vmcb_seg cs;
+	struct vmcb_seg ss;
+	struct vmcb_seg ds;
+	struct vmcb_seg fs;
+	struct vmcb_seg gs;
+	struct vmcb_seg gdtr;
+	struct vmcb_seg ldtr;
+	struct vmcb_seg idtr;
+	struct vmcb_seg tr;
+	u64 vmpl0_ssp;
+	u64 vmpl1_ssp;
+	u64 vmpl2_ssp;
+	u64 vmpl3_ssp;
+	u64 u_cet;
+	u8 reserved_0xc8[2];
+	u8 vmpl;
+	u8 cpl;
+	u8 reserved_0xcc[4];
+	u64 efer;
+	u8 reserved_0xd8[104];
+	u64 xss;
+	u64 cr4;
+	u64 cr3;
+	u64 cr0;
+	u64 dr7;
+	u64 dr6;
+	u64 rflags;
+	u64 rip;
+	u64 dr0;
+	u64 dr1;
+	u64 dr2;
+	u64 dr3;
+	u64 dr0_addr_mask;
+	u64 dr1_addr_mask;
+	u64 dr2_addr_mask;
+	u64 dr3_addr_mask;
+	u8 reserved_0x1c0[24];
+	u64 rsp;
+	u64 s_cet;
+	u64 ssp;
+	u64 isst_addr;
+	u64 rax;
+	u64 star;
+	u64 lstar;
+	u64 cstar;
+	u64 sfmask;
+	u64 kernel_gs_base;
+	u64 sysenter_cs;
+	u64 sysenter_esp;
+	u64 sysenter_eip;
+	u64 cr2;
+	u8 reserved_0x248[32];
+	u64 g_pat;
+	u64 dbgctl;
+	u64 br_from;
+	u64 br_to;
+	u64 last_excp_from;
+	u64 last_excp_to;
+	u8 reserved_0x298[80];
+	u32 pkru;
+	u32 tsc_aux;
+	u8 reserved_0x2f0[24];
+	u64 rcx;
+	u64 rdx;
+	u64 rbx;
+	u64 reserved_0x320;	/* rsp already available at 0x01d8 */
+	u64 rbp;
+	u64 rsi;
+	u64 rdi;
+	u64 r8;
+	u64 r9;
+	u64 r10;
+	u64 r11;
+	u64 r12;
+	u64 r13;
+	u64 r14;
+	u64 r15;
+	u8 reserved_0x380[16];
+	u64 guest_exit_info_1;
+	u64 guest_exit_info_2;
+	u64 guest_exit_int_info;
+	u64 guest_nrip;
+	u64 sev_features;
+	u64 vintr_ctrl;
+	u64 guest_exit_code;
+	u64 virtual_tom;
+	u64 tlb_id;
+	u64 pcpu_id;
+	u64 event_inj;
+	u64 xcr0;
+	u8 reserved_0x3f0[16];
+
+	/* Floating point area */
+	u64 x87_dp;
+	u32 mxcsr;
+	u16 x87_ftw;
+	u16 x87_fsw;
+	u16 x87_fcw;
+	u16 x87_fop;
+	u16 x87_ds;
+	u16 x87_cs;
+	u64 x87_rip;
+	u8 fpreg_x87[80];
+	u8 fpreg_xmm[256];
+	u8 fpreg_ymm[256];
+} __packed;
 
 typedef struct {
 	u8  reserved1[203];

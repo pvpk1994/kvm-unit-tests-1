@@ -112,14 +112,17 @@ unsigned long setup_tss(u8 *stacktop)
 {
 	u32 id;
 	tss64_t *tss_entry;
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
 
 	id = pre_boot_apic_id();
+//	id = 0x1;
 
 	/* Runtime address of current TSS */
 	tss_entry = &tss[id];
 
 	/* Update TSS */
 	memset((void *)tss_entry, 0, sizeof(tss64_t));
+
 
 	/* Update TSS descriptors; each descriptor takes up 2 entries */
 	set_gdt_entry(TSS_MAIN + id * 16, (unsigned long)tss_entry, 0xffff, 0x89, 0);
@@ -152,6 +155,30 @@ unsigned long setup_tss(u8 *stacktop)
 }
 #endif
 
+unsigned long setup_tss_ap(u8 *stacktop)
+{
+	u32 id;
+	tss32_t *tss_entry;
+
+	id = pre_boot_apic_id();
+	tss_entry = (tss32_t *)&tss[id];
+	printf("APIC ID for AP: 0x%x\n", id);
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
+	memset((void *)tss_entry, 0, sizeof(tss32_t));
+	tss_entry->ss0 = KERNEL_DS;
+
+	/* Update descriptors for TSS and percpu data segment.  */
+        set_gdt_entry(TSS_MAIN + id * 8,
+                      (unsigned long)tss_entry, 0xffff, 0x89, 0);
+        set_gdt_entry(TSS_MAIN + MAX_TEST_CPUS * 8 + id * 8,
+                      (unsigned long)stacktop - 4096, 0xfffff, 0x93, 0xc0);
+
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
+        return TSS_MAIN + id * 8;
+}
+
 void setup_multiboot(struct mbi_bootinfo *bi)
 {
 	struct mbi_module *mods;
@@ -174,9 +201,18 @@ void setup_multiboot(struct mbi_bootinfo *bi)
 static void setup_gdt_tss(void)
 {
 	size_t tss_offset;
-	printf("%s\n", __func__);
+	// printf("%s\n", __func__);
 	/* 64-bit setup_tss does not use the stacktop argument.  */
 	tss_offset = setup_tss(NULL);
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
+	load_gdt_tss(tss_offset);
+}
+
+static void setup_gdt_tss_ap(void)
+{
+	size_t tss_offset;
+	tss_offset = setup_tss_ap(NULL);
 	load_gdt_tss(tss_offset);
 }
 
@@ -362,7 +398,6 @@ efi_status_t setup_efi(efi_bootinfo_t *efi_bootinfo)
 	enable_apic();
 	save_id();
 	bsp_rest_init();
-
 	return EFI_SUCCESS;
 }
 
@@ -389,9 +424,18 @@ void save_id(void)
 
 void ap_start64(void)
 {
-	setup_gdt_tss();
+	/* Reuse BSP's (obtained from UEFI)'s #VC for AP */
+	setup_vc_handler();
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+	setup_gdt_tss_ap();
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
 	reset_apic();
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
 	load_idt();
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
 	save_id();
 	enable_apic();
 	enable_x2apic();
@@ -400,13 +444,8 @@ void ap_start64(void)
 
 void bsp_rest_init(void)
 {
-	if (amd_sev_snp_enabled() && fwcfg_get_nb_cpus() > 1) {
-		printf("BSP APIC ID: %u\n", pre_boot_apic_id());
-		setup_vc_handler();
-		bringup_snp_aps();
-	}
-	else
-		bringup_aps();
+
+	bringup_aps();
 	enable_x2apic();
 	smp_init();
 	pmu_init();

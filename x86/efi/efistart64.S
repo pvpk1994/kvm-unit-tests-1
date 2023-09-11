@@ -37,21 +37,48 @@ ptl4:
 
 .code16
 REALMODE_GDT_LOWMEM = PAGE_SIZE - 2
+/*
+.globl sev_snp_trampoline_start
+	cli
+	mov %cs, %ax
+	mov %ax, %ds
+	mov %ax, %es
+	mov %ax, %ss
+5
+	lidtl tr_idt
+	lgdtl tr_gdt
+	call bringup_snp_aps
+*/
 
 .globl rm_trampoline
 rm_trampoline:
 
 .globl sipi_entry
 sipi_entry:
+/*
 	mov %cr0, %eax
 	or $1, %eax
 	mov %eax, %cr0
+*/
+//	wbinvd
+
+	mov %cr0, %eax
+	or $0x1, %eax
+	mov %eax, %cr0
+
 
 	/* Retrieve relocated ap_rm_gdt_descr address at REALMODE_GDT_LOWMEM. */
-	mov (REALMODE_GDT_LOWMEM), %ebx
+	movw (REALMODE_GDT_LOWMEM), %ebx
+
+	/* Load reloacted GDT at the address stored in ebx */
 	lgdtl (%ebx)
 
+//       	mov $0x1111, %esi
+//1:jmp 1b
+
 	lcall $0x18, $0x0
+//	mov $0x1111, %esi
+//1:jmp 1b
 
 .globl ap_rm_gdt
 ap_rm_gdt:

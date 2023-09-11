@@ -113,17 +113,50 @@ efer = 0xc0000080
 
 .globl ap_start32
 ap_start32:
+//	mov $0x1111, %esi
+//1:jmp 1b
 	setup_segments
 
+//	mov $0x1111, %esi
+//1:jmp 1b
+
 	load_absolute_addr $smp_stacktop, %edx
+
+//	mov $0x1111, %esi
+//1:jmp 1b
 	mov $-4096, %esp
+
+//	mov $0x1111, %esi
+//1:jmp 1b
+
 	lock xaddl %esp, (%edx)
 
+//	mov $0x1111, %esi
+//1: jmp 1b
+
 	setup_percpu_area
+
+//	mov $0x1111, %esi
+//1: jmp 1b
+
 	call prepare_64
 
+//	mov $0x1111, %esi
+//1: jmp 1b
+
 	load_absolute_addr $ap_start64, %edx
+
+//	mov $0x1111, %esi
+//1: jmp 1b
+
 	pushl $0x08
 	pushl %edx
+
+//	mov $0x1111, %esi
+//1: jmp 1b
+
 	lretl
+//	mov $0x1111, %esi
+//1: jmp 1b
+
 #endif

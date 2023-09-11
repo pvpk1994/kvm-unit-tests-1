@@ -11,6 +11,8 @@
 #include "desc.h"
 #include "alloc_page.h"
 #include "asm/page.h"
+#include "amd_sev.h"
+#include "alloc.h"
 
 #define IPI_VECTOR 0x20
 
@@ -86,6 +88,7 @@ void ap_online(void)
 {
 	irq_enable();
 
+	printf("Cr0: 0x%lx\n", read_cr0());
 	printf("setup: CPU %" PRId32 " online\n", apic_id());
 	atomic_inc(&cpu_online_count);
 
@@ -132,8 +135,10 @@ void on_cpus(void (*function)(void *data), void *data)
 	for (cpu = cpu_count() - 1; cpu >= 0; --cpu)
 		on_cpu_async(cpu, function, data);
 
-	while (cpus_active() > 1)
+	while (cpus_active() > 1) {
+		printf("WHY PAUSE HERE.\n");
 		pause();
+	}
 }
 
 int cpus_active(void)
@@ -222,10 +227,11 @@ static void setup_rm_gdt(void)
 	 * and this relocated descriptor points to the relocated GDT.
 	 */
 	*((u16 *)(REALMODE_GDT_LOWMEM)) = (u16) (u64) rm_gdt_descr;
+	printf("Relocated ap_rm_gdt_descr addr: 0x%x\n", *((u16 *)(REALMODE_GDT_LOWMEM)));
 
 	/*
 	 * Set up a call gate to the 32-bit entrypoint (ap_start32) within GDT, since
-	 * EFI may not load the 32-bit AP entrypoint (ap_start32) low enough
+ 	 * EFI may not load the 32-bit AP entrypoint (ap_start32) low enough
 	 * to be reachable from the SIPI vector.
 	 *
 	 * Since kvm-unit-tests builds with -shared, this location needs to be fetched
@@ -252,6 +258,12 @@ static void setup_rm_gdt(void)
 	gate_descr = ((void *)(&ap_rm_gdt - &rm_trampoline) + 3 * sizeof(gdt_entry_t));
 	set_desc_entry(gate_descr, sizeof(gdt_entry_t), (void *) &ap_start32,
 		       0x8 /* sel */, 0xc /* type */, 0 /* dpl */);
+	printf("gate descriptor: %p\n, offset0: 0x%x\n, selector: 0x%x\n, ist: 0x%x\n, type: 0x%x\n, dpl: 0x%x\n, p: 0x%x\n, offset1: 0x%x\n, offset2: 0x%x\n",
+		gate_descr, gate_descr->offset0,
+		gate_descr->selector, gate_descr->ist, gate_descr->type,
+		gate_descr->dpl, gate_descr->p, gate_descr->offset1,
+		gate_descr->offset2);
+
 #endif
 }
 
@@ -271,11 +283,21 @@ void bringup_aps(void)
 
 	memcpy(rm_trampoline_dst, &rm_trampoline, rm_trampoline_size);
 
+	printf("READ cr0 = %lx\n", read_cr0());
 	setup_rm_gdt();
+//	free(rm_trampoline_dst);
 
 #ifdef CONFIG_EFI
 	smp_stacktop = ((u64) (&stacktop)) - PAGE_SIZE;
 #endif
+
+	if (amd_sev_snp_enabled())
+                bringup_snp_aps();
+
+
+	else {
+
+	printf("Wakeup All APs.\n");
 
 	/* INIT */
 	apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | APIC_DM_INIT | APIC_INT_ASSERT, 0);
@@ -283,10 +305,13 @@ void bringup_aps(void)
 	/* SIPI */
 	apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | APIC_DM_STARTUP, 0);
 
-	_cpu_count = fwcfg_get_nb_cpus();
+	}
 
+	_cpu_count = fwcfg_get_nb_cpus();
+	free(rm_trampoline_dst);
 	printf("smp: waiting for %d APs\n", _cpu_count - 1);
 	printf("CPU online count: %d\n", atomic_read(&cpu_online_count));
+	printf("Cr0 content: 0x%lx\n", read_cr0());
 	while (_cpu_count != atomic_read(&cpu_online_count))
 		cpu_relax();
 }

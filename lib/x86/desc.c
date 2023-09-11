@@ -333,6 +333,7 @@ static char intr_alt_stack[4096];
 
 void set_gdt_entry(int sel, unsigned long base,  u32 limit, u8 type, u8 flags)
 {
+	/* TSS selector: 15:3: this field locates TSS descriptor in GDT */
 	gdt_entry_t *entry = &gdt[sel >> 3];
 
 	/* Setup the descriptor base address */
