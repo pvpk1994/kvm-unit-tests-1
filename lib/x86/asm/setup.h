@@ -2,7 +2,7 @@
 #define _X86_ASM_SETUP_H_
 
 unsigned long setup_tss(u8 *stacktop);
-
+unsigned long setup_tss_ap(u8 *stacktop);
 #ifdef CONFIG_EFI
 #include "x86/acpi.h"
 #include "x86/apic.h"
