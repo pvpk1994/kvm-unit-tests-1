@@ -9,6 +9,10 @@
 #include "amd_sev.h"
 #include "svm.h"
 #include "x86/xsave.h"
+#include "smp.h"
+#include "alloc_page.h"
+#include "vmalloc.h"
+#include "x86/vm.h"
 
 extern phys_addr_t ghcb_addr;
 
@@ -441,6 +445,104 @@ static enum es_result vc_handle_ioio(struct ghcb *ghcb, struct es_em_ctxt *ctxt)
 	return ret;
 }
 
+static enum es_result vc_do_mmio(struct ghcb *ghcb, struct es_em_ctxt *ctxt,
+				 unsigned int bytes, bool read)
+{
+	u64 exit_code, exit_info1, exit_info2;
+	unsigned long ghcb_pa = __pa(ghcb);
+	phys_addr_t vaddr = 0;
+
+	memcpy(&vaddr, ctxt->insn.immediate1.bytes,
+		ctxt->insn.immediate1.nbytes);
+	exit_code = read ? SVM_VMGEXIT_MMIO_READ :
+		    SVM_VMGEXIT_MMIO_WRITE;
+
+	/* Identity mapped */
+	exit_info1 = vaddr;
+	exit_info2 = bytes;
+
+	ghcb_set_sw_scratch(ghcb, ghcb_pa + offsetof(struct ghcb,
+						     shared_buffer));
+	return sev_es_ghcb_hv_call(ghcb, ctxt, exit_code, exit_info1,
+				   exit_info2);
+}
+
+static inline enum insn_mmio_type insn_decode_mmio(struct insn *insn,
+						   unsigned int *bytes)
+{
+	enum insn_mmio_type type = INSN_MMIO_DECODE_FAILED;
+
+	*bytes = 0;
+
+	if (insn_get_opcode(insn)) {
+		printf("Decoding MMIO instr failed.\n");
+		return INSN_MMIO_DECODE_FAILED;
+	}
+
+	printf("insn->opcode.bytes[0]: 0x%x\n",
+		insn->opcode.bytes[0]);
+
+	switch (insn->opcode.bytes[0]) {
+	/* MMIO Read (Mov rax, moffset) */
+	case 0xa0:
+		*bytes = 1;
+		// fallthrough;
+
+	case 0xa1:
+		if (!*bytes) {
+			*bytes = insn->x86_64 == 1 ? 8 : 0;
+			printf("*bytes: 0x%x\n", *bytes);
+		}
+
+		type = INSN_MMIO_READ;
+		break;
+
+	case 0xc7:
+		if (!*bytes)
+			*bytes = insn->opnd_bytes;
+		type = INSN_MMIO_WRITE_IMM;
+		break;
+	}
+	return type;
+}
+
+static enum es_result vc_handle_mmio(struct ghcb *ghcb,
+				     struct es_em_ctxt *ctxt)
+{
+	struct insn *insn = &ctxt->insn;
+	enum insn_mmio_type mmio;
+	unsigned int bytes = 0;
+	enum es_result ret;
+
+	mmio = insn_decode_mmio(insn, &bytes);
+	printf("mmio type: %d\n", mmio);
+	printf("Bytes: %d\n", bytes);
+
+	if (mmio == INSN_MMIO_DECODE_FAILED)
+		return ES_DECODE_FAILED;
+
+	switch(mmio) {
+		case INSN_MMIO_WRITE_IMM:
+			memcpy(ghcb->shared_buffer,
+			       insn->immediate1.bytes, bytes);
+			ret = vc_do_mmio(ghcb, ctxt, bytes, false);
+			break;
+
+		case INSN_MMIO_READ:
+			memcpy(ghcb->shared_buffer,
+			       insn->immediate1.bytes, bytes);
+			ret = vc_do_mmio(ghcb, ctxt, bytes, true);
+			memcpy(&ctxt->regs->rax, ghcb->shared_buffer,
+			       bytes);
+			break;
+		default:
+			ret = ES_UNSUPPORTED;
+			break;
+	}
+	return ret;
+
+}
+
 static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 					 struct ghcb *ghcb,
 					 unsigned long exit_code)
@@ -457,6 +559,12 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 	case SVM_EXIT_IOIO:
 		result = vc_handle_ioio(ghcb, ctxt);
 		break;
+
+	case SVM_EXIT_NPF:
+		result = vc_handle_mmio(ghcb, ctxt);
+		printf("Result vc_mmio: %d\n", result);
+		break;
+
 	default:
 		/*
 		 * Unexpected #VC exception
@@ -467,28 +575,139 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 	return result;
 }
 
+struct ghcb *get_ghcb(struct ghcb_state *state)
+{
+	struct sev_es_runtime_data *data;
+	struct ghcb *ghcb;
+
+	data = this_cpu_read_runtime_data();
+	ghcb = &data->ghcb_page;
+
+	if (!ghcb)
+		 asm volatile ("1:jmp 1b"::"S"(0x1111));
+
+	state->ghcb = NULL;
+	data->ghcb_active = true;
+
+	return ghcb;
+}
+
 void handle_sev_es_vc(struct ex_regs *regs)
 {
-	struct ghcb *ghcb = (struct ghcb *) ghcb_addr;
-	unsigned long exit_code = regs->error_code;
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
 	struct es_em_ctxt ctxt;
 	enum es_result result;
+	struct ghcb *ghcb;
+	struct ghcb_state state;
+	unsigned long exit_code = regs->error_code;
 
-	if (!ghcb) {
-		/* TODO: kill guest */
-		return;
-	}
+
+	/* For AP #VC exception handling */
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+	if (smp_id() != 0)
+		ghcb = get_ghcb(&state);
+
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+	else
+		ghcb = (struct ghcb *)ghcb_addr;
 
 	vc_ghcb_invalidate(ghcb);
+
 	result = vc_init_em_ctxt(&ctxt, regs, exit_code);
-	if (result == ES_OK)
+//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
+	if (result == ES_OK) {
 		result = vc_handle_exitcode(&ctxt, ghcb, exit_code);
+//		asm volatile ("1:jmp 1b"::"S"(0x1111));
+	}
 	if (result == ES_OK) {
 		vc_finish_insn(&ctxt);
+//		asm volatile ("1:jmp 1b"::"S"(0x1111));
 	} else {
+		printf("CPU ID:%d\n",smp_id());
 		printf("Unable to handle #VC exitcode, exit_code=%lx result=%x\n",
-		       exit_code, result);
+                       exit_code, result);
 	}
 
 	return;
+}
+
+static inline void alloc_runtime_data(void)
+{
+	struct sev_es_runtime_data *data;
+
+	setup_vm();
+
+	data = (struct sev_es_runtime_data *)alloc_page();
+
+	/* Force it to be a 4K page */
+ 	force_4k_page(data);
+
+	if (!data)
+		return;
+
+	/* Allocate this data to CPU */
+	this_cpu_write_smp_id(0x1);
+	this_cpu_write_runtime_data(data);
+}
+
+static inline void init_ghcb(void)
+{
+	struct sev_es_runtime_data *data;
+
+	data = this_cpu_read_runtime_data();
+
+	if (!data) {
+		asm volatile ("1:jmp 1b"::"S"(0x1111));
+		return;
+	}
+
+	set_page_decrypted_ghcb_msr((unsigned long)&data->ghcb_page);
+
+	memset(&data->ghcb_page, 0, sizeof(data->ghcb_page));
+
+	data->ghcb_active = false;
+}
+
+void sev_snp_init_vc_handling(void)
+{
+	if (!amd_sev_snp_enabled())
+		return;
+
+	alloc_runtime_data();
+	init_ghcb();
+}
+
+static inline void snp_register_ghcb(unsigned long pa)
+{
+	unsigned long pfn = pa >> PAGE_SHIFT;
+	u64 val;
+
+	sev_es_wr_ghcb_msr(GHCB_MSR_REG_GPA_REQ_VAL(pfn));
+	VMGEXIT();
+	val = rdmsr(MSR_AMD64_SEV_ES_GHCB);
+
+	if ((GHCB_RESP_CODE(val) != GHCB_MSR_REG_GPA_RESP) ||
+	    (GHCB_MSR_REG_GPA_RESP_VAL(val) != pfn)) {
+		asm volatile ("1:jmp 1b"::"S"(0x1111));
+		return;
+	}
+}
+
+static inline void snp_register_per_cpu_ghcb(void)
+{
+	struct sev_es_runtime_data *data;
+	struct ghcb *ghcb;
+
+	data = this_cpu_read_runtime_data();
+	ghcb = &data->ghcb_page;
+
+	/* identity mapped: va=pa */
+	snp_register_ghcb((unsigned long)ghcb);
+}
+
+void setup_ghcb(void)
+{
+	snp_register_per_cpu_ghcb();
+	//setup_amd_sev_es_vc();
 }

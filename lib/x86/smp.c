@@ -91,6 +91,9 @@ void ap_online(void)
 	printf("Cr0: 0x%lx\n", read_cr0());
 	printf("setup: CPU %" PRId32 " online\n", apic_id());
 	atomic_inc(&cpu_online_count);
+	printf("%s: CPU count: %d\n", __func__, cpu_count());
+	printf("%s: cpu_online_count: %d, cpuid: %d\n", __func__,
+		atomic_read(&cpu_online_count), smp_id());
 
 	/* Only the BSP runs the test's main(), APs are given work via IPIs. */
 	for (;;)
@@ -101,6 +104,7 @@ static void __on_cpu(int cpu, void (*function)(void *data), void *data, int wait
 {
 	const u32 ipi_icr = APIC_INT_ASSERT | APIC_DEST_PHYSICAL | APIC_DM_FIXED | IPI_VECTOR;
 	unsigned int target = id_map[cpu];
+	printf("Target: %d\n", target);
 
 	spin_lock(&ipi_lock);
 	if (target == smp_id()) {
@@ -156,11 +160,14 @@ void smp_init(void)
 	set_idt_entry(IPI_VECTOR, ipi_entry, 0);
 
 	setup_smp_id(0);
-	printf("CPU count: %d\n", cpu_count());
+	printf("%s: CPU count: %d, CPU: %d, id_map: %d\n", __func__,
+		cpu_count(), smp_id(), id_map[0]);
+
 	for (i = 1; i < cpu_count(); ++i)
 		on_cpu(i, setup_smp_id, 0);
 
 	atomic_inc(&active_cpus);
+	printf("BSP Here\n");
 }
 
 static void do_reset_apic(void *data)
@@ -291,20 +298,24 @@ void bringup_aps(void)
 	smp_stacktop = ((u64) (&stacktop)) - PAGE_SIZE;
 #endif
 
-	if (amd_sev_snp_enabled())
-                bringup_snp_aps();
+	if (!amd_sev_snp_enabled()) {
+		printf("vcpu #: %d\n",apic_id());
 
+		printf("Wakeup All APs.\n");
+
+		/* INIT */
+		apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | 
+				APIC_DM_INIT | APIC_INT_ASSERT, 0);
+
+		/* SIPI */
+		apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | 
+				APIC_DM_STARTUP, 0);
+
+	}
 
 	else {
-
-	printf("Wakeup All APs.\n");
-
-	/* INIT */
-	apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | APIC_DM_INIT | APIC_INT_ASSERT, 0);
-
-	/* SIPI */
-	apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | APIC_DM_STARTUP, 0);
-
+		printf("VCPU #: %d\n", apic_id());
+		bringup_snp_aps();
 	}
 
 	_cpu_count = fwcfg_get_nb_cpus();
@@ -312,6 +323,8 @@ void bringup_aps(void)
 	printf("smp: waiting for %d APs\n", _cpu_count - 1);
 	printf("CPU online count: %d\n", atomic_read(&cpu_online_count));
 	printf("Cr0 content: 0x%lx\n", read_cr0());
-	while (_cpu_count != atomic_read(&cpu_online_count))
+	while (_cpu_count != atomic_read(&cpu_online_count)) {
 		cpu_relax();
+	}
+
 }

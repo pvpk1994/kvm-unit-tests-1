@@ -6,6 +6,7 @@
 #include "libcflat.h"
 #include "atomic.h"
 #include "apic-defs.h"
+#include "amd_sev.h"
 
 /* Address where to store the address of realmode GDT descriptor. */
 #define REALMODE_GDT_LOWMEM (PAGE_SIZE - 2)
@@ -22,6 +23,8 @@ struct percpu_data {
 		uint32_t exception_data;
 	};
 	void *apic_ops;
+	struct sev_es_runtime_data *runtime_data;
+	struct sev_es_save_area *vmsa;
 };
 
 #define typeof_percpu(name) typeof(((struct percpu_data *)0)->name)
@@ -74,6 +77,8 @@ BUILD_PERCPU_OP(exception_vector);
 BUILD_PERCPU_OP(exception_rflags_rf);
 BUILD_PERCPU_OP(exception_error_code);
 BUILD_PERCPU_OP(apic_ops);
+BUILD_PERCPU_OP(runtime_data);
+BUILD_PERCPU_OP(vmsa);
 
 void smp_init(void);
 

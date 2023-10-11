@@ -22,6 +22,9 @@
 #include "insn/insn.h"
 #include "svm.h"
 
+#define CONFIG_X86_64		1
+#define IS_ENABLED(option)	1
+
 #define GHCB_SHARED_BUF_SIZE    2032
 
 struct ghcb {
@@ -48,6 +51,23 @@ enum es_result {
 	ES_DECODE_FAILED,	/* Instruction decoding failed */
 	ES_EXCEPTION,		/* Instruction caused exception */
 	ES_RETRY,		/* Retry instruction emulation */
+};
+
+enum insn_mmio_type {
+	INSN_MMIO_DECODE_FAILED,	/* 0 */
+	INSN_MMIO_WRITE,		/* 1 */
+	INSN_MMIO_WRITE_IMM,		/* 2 */
+	INSN_MMIO_READ,			/* 3 */
+	INSN_MMIO_READ_ZERO_EXTEND,	/* 4 */
+	INSN_MMIO_READ_SIGN_EXTEND,	/* 5 */
+	INSN_MMIO_MOVS,			/* 6 */
+};
+
+enum reg_type {
+	REG_TYPE_RM = 0,
+	REG_TYPE_REG,
+	REG_TYPE_INDEX,
+	REG_TYPE_BASE,
 };
 
 struct es_fault_info {
@@ -121,6 +141,8 @@ efi_status_t setup_amd_sev(void);
  *   - Section "#VC Exception"
  */
 #define SEV_ES_VC_HANDLER_VECTOR 29
+#define SVM_VMGEXIT_MMIO_READ	0x80000001
+#define SVM_VMGEXIT_MMIO_WRITE	0x80000002
 #define SVM_VMGEXIT_PSC	0x80000010
 
 /*
@@ -175,6 +197,19 @@ enum psc_op {
 
 #define GHCB_HV_FT_SNP			BIT_ULL(0)
 #define GHCB_HV_FT_SNP_AP_CREATION	BIT_ULL(1)
+
+/* GHCB GPA Registration Request and Response */
+#define GHCB_MSR_REG_GPA_REQ		0x012
+#define GHCB_MSR_REG_GPA_REQ_VAL(v)			\
+	/* GHCBData[63:12] */				\
+	(((u64)((v) & GENMASK_ULL(51, 0)) << 12) |	\
+	/* GHCBData[11:0] */				\
+	GHCB_MSR_REG_GPA_REQ)
+
+#define GHCB_MSR_REG_GPA_RESP		0x013
+#define GHCB_MSR_REG_GPA_RESP_VAL(v)			\
+	/*GHCBData[63:12] */				\
+	(((u64)(v) & GENMASK_ULL(63, 12)) >> 12)
 
 /* VMSA page bit */
 #define RMPADJUST_VMSA_PAGE_BIT		BIT(16)
@@ -368,6 +403,10 @@ typedef struct {
 	u32		ghcb_usage;
 } ghcb_page;
 
+struct ghcb_state {
+	struct ghcb *ghcb;
+};
+
 #define OFFSET_OF(TYPE, field)  ((u64)&(((TYPE *)0)->field))
 
 #define GHCB_SAVE_AREA_QWORD_OFFSET(reg_field) \
@@ -406,6 +445,11 @@ struct snp_psc_desc {
 	struct psc_entry entries[VMGEXIT_PSC_MAX_ENTRY];
 };
 
+struct sev_es_runtime_data {
+	struct ghcb ghcb_page;
+	bool ghcb_active;
+};
+
 bool amd_sev_es_enabled(void);
 efi_status_t setup_vc_handler(void);
 bool amd_sev_snp_enabled(void);
@@ -422,6 +466,10 @@ uint64_t asm_read_cr4(void);
 uint64_t asm_xgetbv(uint32_t index);
 u64 get_hv_features(ghcb_page *ghcb);
 void bringup_snp_aps(void);
+void sev_snp_init_vc_handling(void);
+void set_page_decrypted_ghcb_msr(unsigned long paddr);
+void setup_ghcb(void);
+struct ghcb *get_ghcb(struct ghcb_state *state);
 
 /*
  * Macros to generate condition code outputs from inline assembly,

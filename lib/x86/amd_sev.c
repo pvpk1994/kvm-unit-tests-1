@@ -16,6 +16,10 @@
 #include "vmalloc.h"
 #include "apic.h"
 #include "smp.h"
+#include "fwcfg.h"
+
+
+//static struct percpu_data __percpu_data[MAX_TEST_CPUS];
 
 /*
  * AP INIT values as documented in APM2
@@ -56,8 +60,6 @@
 
 static unsigned short amd_sev_c_bit_pos;
 phys_addr_t ghcb_addr;
-
-static struct percpu_data __percpu_data[MAX_TEST_CPUS];
 
 u64 asm_read_cr4(void)
 {
@@ -470,6 +472,18 @@ void bringup_snp_aps()
 	}
 
 	irq_enable();
+
+	/* Store the current VMSA page in per-cpu of AP */
+	this_cpu_write_smp_id(0x1);
+	this_cpu_write_vmsa(vmsa);
+	printf("CPUid: %d, vmsa->sev_features: 0x%lx\n",
+		this_cpu_read_smp_id(),
+		vmsa->sev_features);
+	//__percpu_data[0x1].vmsa = vmsa;
+
+	this_cpu_write_smp_id(pre_boot_apic_id());
+	printf("SMP ID in %s: %d\n",__func__,smp_id());
+	printf("Number of cpus: %d\n", fwcfg_get_nb_cpus());
 	/* Restore old GHCB MSR */
 	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 //	irq_enable();

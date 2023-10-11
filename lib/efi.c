@@ -140,7 +140,7 @@ efi_status_t efi_main(efi_handle_t handle, efi_system_table_t *sys_tab)
 		printf("Failed to set up arch-specific resources\n");
 		goto efi_main_error;
 	}
-
+	printf("SMP ID after efi_main: %d\n", smp_id());
 	/* Run the test case */
 	ret = main(__argc, __argv, __environ);
 

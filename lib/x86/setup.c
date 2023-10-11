@@ -18,6 +18,7 @@
 #include "pmu.h"
 #include "processor.h"
 #include "smp.h"
+#include "amd_sev.h"
 
 extern char edata;
 
@@ -112,11 +113,11 @@ unsigned long setup_tss(u8 *stacktop)
 {
 	u32 id;
 	tss64_t *tss_entry;
-//	asm volatile ("1:jmp 1b"::"S"(0x1111));
 
-	id = pre_boot_apic_id();
+//	id = pre_boot_apic_id();
 //	id = 0x1;
 
+	id = 0x1;
 	/* Runtime address of current TSS */
 	tss_entry = &tss[id];
 
@@ -155,30 +156,6 @@ unsigned long setup_tss(u8 *stacktop)
 }
 #endif
 
-unsigned long setup_tss_ap(u8 *stacktop)
-{
-	u32 id;
-	tss32_t *tss_entry;
-
-	id = pre_boot_apic_id();
-	tss_entry = (tss32_t *)&tss[id];
-	printf("APIC ID for AP: 0x%x\n", id);
-//	asm volatile ("1:jmp 1b"::"S"(0x1111));
-
-	memset((void *)tss_entry, 0, sizeof(tss32_t));
-	tss_entry->ss0 = KERNEL_DS;
-
-	/* Update descriptors for TSS and percpu data segment.  */
-        set_gdt_entry(TSS_MAIN + id * 8,
-                      (unsigned long)tss_entry, 0xffff, 0x89, 0);
-        set_gdt_entry(TSS_MAIN + MAX_TEST_CPUS * 8 + id * 8,
-                      (unsigned long)stacktop - 4096, 0xfffff, 0x93, 0xc0);
-
-//	asm volatile ("1:jmp 1b"::"S"(0x1111));
-
-        return TSS_MAIN + id * 8;
-}
-
 void setup_multiboot(struct mbi_bootinfo *bi)
 {
 	struct mbi_module *mods;
@@ -206,13 +183,6 @@ static void setup_gdt_tss(void)
 	tss_offset = setup_tss(NULL);
 //	asm volatile ("1:jmp 1b"::"S"(0x1111));
 
-	load_gdt_tss(tss_offset);
-}
-
-static void setup_gdt_tss_ap(void)
-{
-	size_t tss_offset;
-	tss_offset = setup_tss_ap(NULL);
 	load_gdt_tss(tss_offset);
 }
 
@@ -433,22 +403,28 @@ void save_id(void)
 
 void ap_start64(void)
 {
-	/* Reuse BSP's (obtained from UEFI)'s #VC for AP */
-	setup_vc_handler();
-//	asm volatile ("1:jmp 1b"::"S"(0x1111));
-	setup_gdt_tss_ap();
-//	asm volatile ("1:jmp 1b"::"S"(0x1111));
-
-	reset_apic();
-//	asm volatile ("1:jmp 1b"::"S"(0x1111));
-
+	sev_snp_init_vc_handling();
+	setup_gdt_tss();
 	load_idt();
-//	asm volatile ("1:jmp 1b"::"S"(0x1111));
+
+	setup_amd_sev_es_vc();
+	setup_ghcb();
+	// reset_apic();
+	// Verify vmsa details
+/*
+	printf("CPU: %d, ghcb_page: 0x%lx\n",
+		this_cpu_read_smp_id(),
+		this_cpu_read_ghcb_page());
+*/
+	reset_apic();
+	//asm volatile ("1:jmp 1b"::"S"(0x1111));
 
 	save_id();
 	enable_apic();
 	enable_x2apic();
 	ap_online();
+	printf("_cpu_count: %d\n, cpu_online_count: %d\n",
+		cpu_count(), atomic_read(&cpu_online_count));
 }
 
 void bsp_rest_init(void)
@@ -457,5 +433,8 @@ void bsp_rest_init(void)
 	bringup_aps();
 	enable_x2apic();
 	smp_init();
+	printf("%s: _cpu_count: %d\n, cpu_online_count: %d\n",
+                __func__, cpu_count(), atomic_read(&cpu_online_count));
+
 	pmu_init();
 }
