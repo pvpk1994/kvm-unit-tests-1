@@ -398,6 +398,7 @@ void setup_libcflat(void)
 
 void save_id(void)
 {
+	printf("apic_id: %d\n", apic_id());
 	set_bit(apic_id(), online_cpus);
 }
 
@@ -417,6 +418,7 @@ void ap_start64(void)
 		this_cpu_read_ghcb_page());
 */
 	reset_apic();
+	printf("%s: apic_id: %d", __func__, apic_id());
 	//asm volatile ("1:jmp 1b"::"S"(0x1111));
 
 	save_id();

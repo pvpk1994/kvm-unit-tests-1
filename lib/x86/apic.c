@@ -252,7 +252,13 @@ void init_apic_map(void)
 	unsigned int i, j = 0;
 
 	for (i = 0; i < MAX_TEST_CPUS; i++) {
-		if ((1ul << (i % 8)) & (online_cpus[i / 8]))
+
+		printf("online_cpus[%d/8]: 0x%x\n", i,
+			online_cpus[i/8]);
+
+		if ((1ul << (i % 8)) & (online_cpus[i / 8])) {
+			printf("%s: id_map[%d]: %d\n", __func__, j, i);
 			id_map[j++] = i;
+		}
 	}
 }

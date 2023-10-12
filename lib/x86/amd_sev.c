@@ -473,6 +473,7 @@ void bringup_snp_aps()
 
 	irq_enable();
 
+	printf("id_map[1]: %d\n", id_map[1]);
 	/* Store the current VMSA page in per-cpu of AP */
 	this_cpu_write_smp_id(0x1);
 	this_cpu_write_vmsa(vmsa);

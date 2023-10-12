@@ -104,20 +104,23 @@ static void __on_cpu(int cpu, void (*function)(void *data), void *data, int wait
 {
 	const u32 ipi_icr = APIC_INT_ASSERT | APIC_DEST_PHYSICAL | APIC_DM_FIXED | IPI_VECTOR;
 	unsigned int target = id_map[cpu];
-	printf("Target: %d\n", target);
+	printf("%s: Target: %d\n", __func__, target);
+	printf("%s: smp_id: %d\n", __func__, smp_id());
 
 	spin_lock(&ipi_lock);
 	if (target == smp_id()) {
 		function(data);
 	} else {
-		atomic_inc(&active_cpus);
-		ipi_done = 0;
-		ipi_function = function;
-		ipi_data = data;
-		ipi_wait = wait;
-		apic_icr_write(ipi_icr, target);
-		while (!ipi_done)
-			;
+		if (!amd_sev_snp_enabled()) {
+			atomic_inc(&active_cpus);
+			ipi_done = 0;
+			ipi_function = function;
+			ipi_data = data;
+			ipi_wait = wait;
+			apic_icr_write(ipi_icr, target);
+			while (!ipi_done)
+				;
+		}
 	}
 	spin_unlock(&ipi_lock);
 }
