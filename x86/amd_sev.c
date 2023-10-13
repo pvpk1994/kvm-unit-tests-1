@@ -770,6 +770,25 @@ static void test_sev_snp_psc(void)
 			SNP_PAGE_STATE_PRIVATE);
 }
 
+enum es_result hv_snp_ap_feature_check(ghcb_page *ghcb)
+{
+	ghcb->protocol_version = GHCB_PROTOCOL_MAX << 1;
+
+	/* Check for hypervisor SNP feature support */
+	if (!(get_hv_features(ghcb) & GHCB_HV_FT_SNP)) {
+		printf("Hypervisor SNP feature not supported.\n");
+		return ES_UNSUPPORTED;
+	}
+
+	/* Now check for hypervisor SNP AP Creation feature support */
+	if (!(get_hv_features(ghcb) & GHCB_HV_FT_SNP_AP_CREATION)) {
+		printf("Hypervisor SNP AP creation feature not supported.\n");
+		return ES_UNSUPPORTED;
+	}
+
+	return ES_OK;
+}
+
 static void test_stringio(void)
 {
 	int st1_len = sizeof(st1) - 1;
@@ -790,12 +809,18 @@ static void test_stringio(void)
 int main(void)
 {
 	int rtn;
+	ghcb_page *ghcb = (ghcb_page *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
 	setup_vm();
 	test_sev_snp_activation();
 	test_sev_snp_psc();
+
+	if (!hv_snp_ap_feature_check(ghcb))
+		printf("SEV-SNP AP creation hypervisor feature is supported.\n");
+
 	test_stringio();
 	return report_summary();
 }
