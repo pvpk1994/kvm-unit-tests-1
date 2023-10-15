@@ -11,6 +11,8 @@
 #include "desc.h"
 #include "alloc_page.h"
 #include "asm/page.h"
+#include "amd_sev.h"
+#include "alloc.h"
 
 #define IPI_VECTOR 0x20
 
@@ -276,14 +278,22 @@ void bringup_aps(void)
 	smp_stacktop = ((u64) (&stacktop)) - PAGE_SIZE;
 #endif
 
-	/* INIT */
-	apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | APIC_DM_INIT | APIC_INT_ASSERT, 0);
+	if (!amd_sev_snp_enabled()) {
+		asm volatile ("1: jmp 1b" : : "S" (0x1111));
+		/* INIT */
+		apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL |
+			       APIC_DM_INIT | APIC_INT_ASSERT, 0);
 
-	/* SIPI */
-	apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL | APIC_DM_STARTUP, 0);
+		/* SIPI */
+		apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL |
+			       APIC_DM_STARTUP, 0);
+	}
+
+	else if (amd_sev_snp_enabled() && fwcfg_get_nb_cpus() > 1) {
+		bringup_snp_aps();
+	}
 
 	_cpu_count = fwcfg_get_nb_cpus();
-
 	printf("smp: waiting for %d APs\n", _cpu_count - 1);
 	while (_cpu_count != atomic_read(&cpu_online_count))
 		cpu_relax();
