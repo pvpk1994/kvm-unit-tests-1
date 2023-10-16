@@ -35,8 +35,26 @@ struct ghcb {
 	u32 ghcb_usage;
 } __packed;
 
+/* SEV Informataion Request/Response */
+#define GHCB_MSR_SEV_INFO_RESP	0x001
+#define GHCB_MSR_SEV_INFO_REQ	0x002
+
+#define GHCB_MSR_SEV_INFO(_max, _min, _cbit)		\
+	/* GHCBData[63:48] */				\
+	(((_max) & 0xffff) << 48) |			\
+	/* GHCBData[47:32] */				\
+	(((_min) & 0xffff) << 32) |			\
+	/* GHCBData[31:24] */				\
+	(((_cbit) & 0xff) << 24) |			\
+	GHCB_MSR_SEV_INFO_RESP)
+
+#define GHCB_MSR_INFO(v)	((v) & 0xfffUL)
+#define GHCB_MSR_PROTO_MAX(v)	(((v) >> 48) & 0xffff)
+#define GHCB_MSR_PROTO_MIN(v)	(((v) >> 32) & 0xffff)
+
 #define GHCB_PROTO_OUR		0x0001UL
-#define GHCB_PROTOCOL_MAX	1ULL
+#define GHCB_PROTOCOL_MIN	1ULL
+#define GHCB_PROTOCOL_MAX	2ULL
 #define GHCB_DEFAULT_USAGE	0ULL
 
 #define	VMGEXIT()			{ asm volatile("rep; vmmcall\n\r"); }
@@ -79,6 +97,7 @@ struct es_em_ctxt {
 #define MSR_SEV_STATUS      0xc0010131
 #define SEV_ENABLED_MASK    0b1
 #define SEV_ES_ENABLED_MASK 0b10
+#define SEV_SNP_ENABLED_MASK 0b100
 
 bool amd_sev_enabled(void);
 efi_status_t setup_amd_sev(void);
@@ -96,6 +115,7 @@ efi_status_t setup_amd_sev(void);
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
 
 bool amd_sev_es_enabled(void);
+bool amd_sev_snp_enabled(void);
 efi_status_t setup_amd_sev_es(void);
 void setup_ghcb_pte(pgd_t *page_table);
 void handle_sev_es_vc(struct ex_regs *regs);
@@ -155,6 +175,17 @@ DEFINE_GHCB_ACCESSORS(sw_exit_info_1)
 DEFINE_GHCB_ACCESSORS(sw_exit_info_2)
 DEFINE_GHCB_ACCESSORS(sw_scratch)
 DEFINE_GHCB_ACCESSORS(xcr0)
+
+#define GHCB_HV_FT_SNP				BIT_ULL(0)
+#define GHCB_HV_FT_SNP_AP_CREATION		BIT_ULL(1)
+
+#define GHCB_DATA_LOW				12
+#define GHCB_MSR_INFO_MASK			(BIT_ULL(GHCB_DATA_LOW) - 1)
+#define GHCB_RESP_CODE(v)			((v) & GHCB_MSR_INFO_MASK)
+
+u64 get_hv_features(struct ghcb *ghcb_page);
+enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page);
+void get_ghcb_version(void);
 
 #endif /* CONFIG_EFI */
 

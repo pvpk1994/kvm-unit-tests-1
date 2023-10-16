@@ -399,6 +399,8 @@ struct __attribute__ ((__packed__)) vmcb {
 #define	SVM_DR7_RESERVED_MASK			0xffffffff0000cc00U
 #define	SVM_EFER_RESERVED_MASK			0xffffffffffff0200U
 
+#define SVM_VMGEXIT_HV_FEATURES			0x8000fffd
+
 #define MSR_BITMAP_SIZE 8192
 
 #define LBR_CTL_ENABLE_MASK BIT_ULL(0)

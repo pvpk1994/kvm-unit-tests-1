@@ -86,12 +86,45 @@ static void test_stringio(void)
 	report((got & 0xff00) >> 8 == st1[sizeof(st1) - 2], "outsb up");
 }
 
+enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page)
+{
+	u64 result = get_hv_features(ghcb_page);
+
+	/* Check for hypervisor SEV-SNP feature support */
+	if (!(result & GHCB_HV_FT_SNP)) {
+		printf("Hypervisor SEV-SNP feature not supported.\n");
+		return ES_VMM_ERROR;
+	}
+
+	/* Now check for hypervisor SEV-SNP AP creation feature support */
+	if (!(result & GHCB_HV_FT_SNP_AP_CREATION)) {
+		printf("Hypervisor SEV-SNP AP creation feature not supported.\n");
+		return ES_UNSUPPORTED;
+	}
+
+	return ES_OK;
+}
+
 int main(void)
 {
 	int rtn;
+	struct ghcb *ghcb_page = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
 	test_stringio();
+
+	if (!amd_sev_snp_enabled()) {
+		printf("SEV-SNP not enabled.\n");
+		return 0;
+	}
+
+	printf("SEV-SNP is enabled.\n");
+
+	/* Perform AP support feature check */
+	if (!hv_snp_ap_feature_check(ghcb_page))
+		printf("SEV-SNP AP Creation feature supported by hypervisor.\n");
+
 	return report_summary();
 }
