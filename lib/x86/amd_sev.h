@@ -35,8 +35,26 @@ struct ghcb {
 	u32 ghcb_usage;
 } __packed;
 
+/* SEV Informataion Request/Response */
+#define GHCB_MSR_SEV_INFO_RESP	0x001
+#define GHCB_MSR_SEV_INFO_REQ	0x002
+
+#define GHCB_MSR_SEV_INFO(_max, _min, _cbit)		\
+	/* GHCBData[63:48] */				\
+	(((_max) & 0xffff) << 48) |			\
+	/* GHCBData[47:32] */				\
+	(((_min) & 0xffff) << 32) |			\
+	/* GHCBData[31:24] */				\
+	(((_cbit) & 0xff) << 24) |			\
+	GHCB_MSR_SEV_INFO_RESP)
+
+#define GHCB_MSR_INFO(v)	((v) & 0xfffUL)
+#define GHCB_MSR_PROTO_MAX(v)	(((v) >> 48) & 0xffff)
+#define GHCB_MSR_PROTO_MIN(v)	(((v) >> 32) & 0xffff)
+
 #define GHCB_PROTO_OUR		0x0001UL
-#define GHCB_PROTOCOL_MAX	1ULL
+#define GHCB_PROTOCOL_MIN	1ULL
+#define GHCB_PROTOCOL_MAX	2ULL
 #define GHCB_DEFAULT_USAGE	0ULL
 
 #define	VMGEXIT()			{ asm volatile("rep; vmmcall\n\r"); }
@@ -157,6 +175,16 @@ DEFINE_GHCB_ACCESSORS(sw_exit_info_1)
 DEFINE_GHCB_ACCESSORS(sw_exit_info_2)
 DEFINE_GHCB_ACCESSORS(sw_scratch)
 DEFINE_GHCB_ACCESSORS(xcr0)
+
+#define GHCB_HV_FT_SNP				BIT_ULL(0)
+#define GHCB_HV_FT_SNP_AP_CREATION		BIT_ULL(1)
+
+#define GHCB_DATA_LOW				12
+#define GHCB_MSR_INFO_MASK			(BIT_ULL(GHCB_DATA_LOW) - 1)
+#define GHCB_RESP_CODE(v)			((v) & GHCB_MSR_INFO_MASK)
+
+enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page);
+void get_ghcb_version(void);
 
 #endif /* CONFIG_EFI */
 

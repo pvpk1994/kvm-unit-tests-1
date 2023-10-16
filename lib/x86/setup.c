@@ -365,6 +365,8 @@ efi_status_t setup_efi(efi_bootinfo_t *efi_bootinfo)
 	setup_page_table();
 	enable_apic();
 	save_id();
+	if (amd_sev_snp_enabled())
+		get_ghcb_version();
 	bsp_rest_init();
 
 #ifndef AMDSEV_EFI_VC

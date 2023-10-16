@@ -93,5 +93,13 @@ int main(void)
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
 	test_stringio();
+
+	if (!amd_sev_snp_enabled()) {
+		printf("SEV-SNP not enabled.\n");
+		return 0;
+	}
+
+	printf("SEV-SNP is enabled.\n");
+
 	return report_summary();
 }
