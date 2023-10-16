@@ -355,6 +355,11 @@ struct snp_psc_desc {
 	struct psc_entry entries[VMGEXIT_PSC_MAX_ENTRY];
 };
 
+struct sev_es_runtime_data {
+	struct ghcb ghcb_page;
+	bool ghcb_active;
+};
+
 bool amd_sev_es_enabled(void);
 efi_status_t setup_vc_handler(void);
 bool amd_sev_snp_enabled(void);
@@ -372,6 +377,8 @@ uint64_t asm_xgetbv(uint32_t index);
 u64 get_hv_features(ghcb_page *ghcb);
 enum es_result hv_snp_ap_feature_check(ghcb_page *ghcb);
 void bringup_snp_aps(void);
+void sev_snp_init_vc_handling(void);
+void set_page_decrypted_ghcb_msr(unsigned long paddr);
 
 /*
  * Macros to generate condition code outputs from inline assembly,

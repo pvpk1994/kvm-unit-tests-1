@@ -9,6 +9,9 @@
 #include "amd_sev.h"
 #include "svm.h"
 #include "x86/xsave.h"
+#include "smp.h"
+#include "alloc_page.h"
+#include "x86/vm.h"
 
 extern phys_addr_t ghcb_addr;
 
@@ -492,3 +495,51 @@ void handle_sev_es_vc(struct ex_regs *regs)
 
 	return;
 }
+
+static inline void alloc_runtime_data(void)
+{
+	struct sev_es_runtime_data *data;
+
+	/* Enables alloc_page() for EFI builds */
+	setup_vm();
+
+	data = (struct sev_es_runtime_data *)alloc_page();
+
+	/* Force it to be a 4K page */
+	force_4k_page(data);
+
+	if (!data)
+		return;
+
+	/* Since BSP has entered cpu_relax() by now, this_cpu_* will
+	 * only read/write data to AP
+	 */
+	this_cpu_write_runtime_data(data);
+}
+
+static inline void init_ghcb(void)
+{
+	struct sev_es_runtime_data *data;
+
+	data = this_cpu_read_runtime_data();
+
+	if (!data)
+		return;
+
+	/* This GHCB page needs to be decrypted, use GHCB MSR protocol */
+	set_page_decrypted_ghcb_msr((unsigned long)&data->ghcb_page);
+
+	memset(&data->ghcb_page, 0, sizeof(data->ghcb_page));
+
+	data->ghcb_active = false;
+}
+
+void sev_snp_init_vc_handling(void)
+{
+	if (!amd_sev_snp_enabled())
+		return;
+
+	alloc_runtime_data();
+	init_ghcb();
+}
+

@@ -32,7 +32,6 @@ struct cc_blob_sev_info *snp_cc_blob;
 static char st1[] = "abcdefghijklmnop";
 
 static void snp_set_page_shared(unsigned long paddr);
-static void set_page_decrypted_ghcb_msr(unsigned long vaddr);
 static void unset_c_bit_pte(unsigned long vaddr);
 static void snp_set_page_private(unsigned long paddr);
 static void set_page_encrypted_ghcb_msr(unsigned long vaddr);

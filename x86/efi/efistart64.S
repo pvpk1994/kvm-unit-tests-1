@@ -48,7 +48,13 @@ sipi_entry:
 	mov %eax, %cr0
 
 	/* Retrieve relocated ap_rm_gdt_descr address at REALMODE_GDT_LOWMEM. */
-	mov (REALMODE_GDT_LOWMEM), %ebx
+	/*
+	 * SEV-SNP guest fails/ ends up writing garbage into upper 16
+	 * bits of ebx register with mov since REALMODE_GDT_LOWMEM is
+	 * 16-bit. Workaround is to either Change it to movw / change
+	 * register to bx
+	 */
+	movw (REALMODE_GDT_LOWMEM), %ebx
 	lgdtl (%ebx)
 
 	lcall $0x18, $0x0

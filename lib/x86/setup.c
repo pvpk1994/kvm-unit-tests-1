@@ -397,6 +397,7 @@ void save_id(void)
 
 void ap_start64(void)
 {
+	sev_snp_init_vc_handling();
 	setup_gdt_tss();
 	reset_apic();
 	load_idt();
