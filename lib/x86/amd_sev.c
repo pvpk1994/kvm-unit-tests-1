@@ -169,3 +169,50 @@ unsigned long long get_amd_sev_addr_upperbound(void)
 		return PT_ADDR_UPPER_BOUND_DEFAULT;
 	}
 }
+
+bool amd_sev_snp_enabled(void)
+{
+	static bool sev_snp_enabled;
+	static bool initialized = false;
+
+	if (!initialized) {
+		sev_snp_enabled = false;
+		initialized = true;
+
+		if (!amd_sev_es_enabled())
+			return sev_snp_enabled;
+
+		/* Test if SEV-SNP is enabled */
+		sev_snp_enabled = rdmsr(MSR_SEV_STATUS) &
+				  SEV_SNP_ENABLED_MASK;
+	}
+
+	return sev_snp_enabled;
+}
+
+u64 get_hv_features(struct ghcb *ghcb_page)
+{
+	u64 val;
+
+	if (ghcb_page->protocol_version < 2) {
+		printf("GHCB protocol version has to be 2!\n");
+		return 0;
+	}
+
+	/* Save old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, GHCB_MSR_HV_FT_REQ);
+	VMGEXIT();
+
+	val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+	/* Restore old GHCB MSR */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+
+	if (GHCB_RESP_CODE(val) != GHCB_MSR_HV_FT_RESP) {
+		printf("SNP AP creation response code from hypervisor does not match expected response.\n");
+		return 0;
+	}
+
+	return GHCB_MSR_HV_FT_RESP_VAL(val);
+}
