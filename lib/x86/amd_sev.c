@@ -13,6 +13,7 @@
 #include "x86/processor.h"
 #include "x86/vm.h"
 
+static u16 ghcb_version;
 static unsigned short amd_sev_c_bit_pos;
 phys_addr_t ghcb_addr;
 
@@ -188,4 +189,54 @@ bool amd_sev_snp_enabled(void)
 	}
 
 	return sev_snp_enabled;
+}
+
+u64 get_hv_features(struct ghcb *ghcb_page)
+{
+	ghcb_page->protocol_version = ghcb_version;
+	if (ghcb_page->protocol_version < 2) {
+		printf("GHCB protocol version has to be 2!\n");
+		return 0;
+	}
+
+	ghcb_page->ghcb_usage = GHCB_DEFAULT_USAGE;
+
+	ghcb_set_sw_exit_code(ghcb_page, SVM_VMGEXIT_HV_FEATURES);
+	ghcb_set_sw_exit_info_1(ghcb_page, 0);
+	ghcb_set_sw_exit_info_2(ghcb_page, 0);
+
+	VMGEXIT();
+
+	if (!ghcb_page->save.sw_exit_info_2) {
+		printf("Unable to retreive features bitmap.\n");
+		return 0;
+	}
+
+	return ghcb_page->save.sw_exit_info_2;
+}
+
+void get_ghcb_version(void)
+{
+	u64 val;
+	phys_addr_t ghcb_old_msr;
+
+	ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/* GHCB protocol version negotiation */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, GHCB_MSR_SEV_INFO_REQ);
+	VMGEXIT();
+
+	val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	if (GHCB_MSR_INFO(val) != GHCB_MSR_SEV_INFO_RESP)
+		return;
+
+	if (GHCB_MSR_PROTO_MAX(val) < GHCB_PROTOCOL_MIN ||
+	    GHCB_MSR_PROTO_MIN(val) > GHCB_PROTOCOL_MAX)
+		return;
+
+	ghcb_version = MIN(GHCB_MSR_PROTO_MAX(val), GHCB_PROTOCOL_MAX);
+
+	/* Restore old GHCB MSR */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 }
