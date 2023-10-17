@@ -63,8 +63,6 @@ u32 initrd_size;
 static char env[ENV_SIZE];
 static struct mbi_bootinfo *bootinfo;
 
-#define HUGEPAGE_SIZE (1 << 21)
-
 #ifdef __x86_64__
 void find_highmem(void)
 {
@@ -421,6 +419,7 @@ void bsp_rest_init(void)
 {
 	bringup_aps();
 	enable_x2apic();
-	smp_init();
+	if (!amd_sev_snp_enabled())
+		smp_init();
 	pmu_init();
 }

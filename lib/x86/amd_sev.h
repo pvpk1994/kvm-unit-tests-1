@@ -308,6 +308,37 @@ static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 # define CC_OUT(c)[_cc_ ## c] "=qm"
 #endif
 
+/*
+ * AP INIT values as documented in APM vol 2
+ * under "Processor Initialization state"
+ */
+#define AP_INIT_CS_LIMIT			0xffff
+#define AP_INIT_DS_LIMIT			0xffff
+#define AP_INIT_LDTR_LIMIT			0xffff
+#define AP_INIT_GDTR_LIMIT			0xffff
+#define AP_INIT_IDTR_LIMIT			0xffff
+#define AP_INIT_TR_LIMIT			0xffff
+#define AP_INIT_RFLAGS_DEFAULT			0x2
+#define AP_INIT_DR6_DEFAULT			0xffff0ff0
+#define AP_INIT_CR0_DEFAULT			0x60000010
+#define AP_DR7_RESET				0x400
+#define AP_INIT_GPAT_DEFAULT			0x0007040600070406ULL
+#define AP_INIT_XCR0_DEFAULT			0x1
+#define AP_INIT_MXCSR_DEFAULT			0x1f80
+#define AP_INIT_X87_FTW_DEFAULT			0x5555
+#define AP_INIT_X87_FCW_DEFAULT			0x40
+
+#define SVM_VMGEXIT_AP_CREATION			0x80000013
+#define SVM_VMGEXIT_AP_CREATE			1
+
+#define __ATTR_BASE		(SVM_SELECTOR_P_MASK | SVM_SELECTOR_S_MASK)
+#define INIT_CS_ATTRIBS		(__ATTR_BASE | SVM_SELECTOR_READ_MASK | SVM_SELECTOR_CODE_MASK)
+#define INIT_DS_ATTRIBS		(__ATTR_BASE | SVM_SELECTOR_WRITE_MASK)
+#define INIT_LDTR_ATTRIBS	(SVM_SELECTOR_P_MASK | 2)
+#define INIT_TR_ATTRIBS		(SVM_SELECTOR_P_MASK | 3)
+
+void bringup_snp_aps(int apicid);
+
 #endif /* CONFIG_EFI */
 
 #endif /* _X86_AMD_SEV_H_ */
