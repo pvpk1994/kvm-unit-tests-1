@@ -12,7 +12,7 @@
 
 extern phys_addr_t ghcb_addr;
 
-static void vc_ghcb_invalidate(struct ghcb *ghcb)
+void vc_ghcb_invalidate(struct ghcb *ghcb)
 {
 	ghcb->save.sw_exit_code = 0;
 	memset(ghcb->save.valid_bitmap, 0, sizeof(ghcb->save.valid_bitmap));
@@ -59,7 +59,7 @@ static void vc_finish_insn(struct es_em_ctxt *ctxt)
 	ctxt->regs->rip += ctxt->insn.length;
 }
 
-static inline void sev_es_wr_ghcb_msr(u64 val)
+void sev_es_wr_ghcb_msr(u64 val)
 {
 	wrmsr(MSR_AMD64_SEV_ES_GHCB, val);
 }
