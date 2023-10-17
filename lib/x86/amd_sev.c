@@ -13,6 +13,11 @@
 #include "x86/processor.h"
 #include "x86/vm.h"
 #include "x86/smp.h"
+#include "alloc_page.h"
+#include "fwcfg.h"
+#include "apic.h"
+#include "vmalloc.h"
+#include "asm/setup.h"
 
 static u16 ghcb_version;
 static unsigned short amd_sev_c_bit_pos;
@@ -497,4 +502,134 @@ void snp_register_per_cpu_ghcb(void)
 
 	/* Identity mapping: va = pa */
 	snp_register_ghcb((unsigned long)ghcb);
+}
+
+static inline int snp_set_vmsa(void *va, bool vmsa)
+{
+	u64 attrs;
+
+	/* Running at VMPL 0 allows kernel to change VMSA bit for a page
+	 * using RMPADJUST. However, for instr to succeed, we must
+	 * target permissions of a lesser privileged VMPL level.
+	 * Therefore, use VMPL level 1 (APM Vol 3 - RMPADJUST instr)
+	 */
+	attrs = 1;
+
+	if (vmsa)
+		attrs |= RMPADJUST_VMSA_PAGE_BIT;
+
+	return rmpadjust((unsigned long)va, RMP_PG_SIZE_4K, attrs);
+}
+
+void bringup_snp_aps(int apicid)
+{
+	int ret;
+	u64 cr4;
+	struct sev_es_save_area *vmsa;
+
+	struct ghcb *ghcb = (struct ghcb *)rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	if (hv_snp_ap_feature_check(ghcb)) {
+		printf("SEV-SNP AP hypervisor feature NOT supported.\n");
+		return;
+	}
+
+	/* To enable alloc_page() for EFI builds */
+	setup_vm();
+
+	/*
+	 * TODO: Account for VMSA related SNP erratum
+	 * This erratum exists for large 2M pages.
+	 */
+	vmsa = (struct sev_es_save_area *)alloc_page();
+	if (!vmsa) {
+		printf("VMSA page not allocated.\n");
+		return;
+	}
+
+	force_4k_page(vmsa);
+
+	if (IS_ALIGNED((phys_addr_t)vmsa, HUGEPAGE_SIZE)) {
+		printf("VMSA page is 2M boundary aligned.\n");
+		return;
+	}
+
+	/* CR4 must maintain MCE value */
+	cr4 = read_cr4() & X86_CR4_MCE;
+
+	/*
+	 * RM_TRAMPOLINE_ADDR is defined at addr 0x0.
+	 * sipi_vector becomes 0 and therefore cs.base, rip, and
+	 * cs.selector all are 0.
+	 */
+	vmsa->cs.base		= 0;
+	vmsa->cs.limit		= AP_INIT_CS_LIMIT;
+	vmsa->cs.attrib		= INIT_CS_ATTRIBS;
+	vmsa->cs.selector	= 0;
+
+	vmsa->rip		= 0;
+
+	vmsa->ds.limit		= AP_INIT_DS_LIMIT;
+	vmsa->ds.attrib		= INIT_DS_ATTRIBS;
+
+	vmsa->es		= vmsa->ds;
+	vmsa->fs		= vmsa->ds;
+	vmsa->gs		= vmsa->ds;
+	vmsa->ss		= vmsa->ds;
+
+	vmsa->gdtr.limit	= AP_INIT_GDTR_LIMIT;
+	vmsa->ldtr.limit	= AP_INIT_LDTR_LIMIT;
+	vmsa->ldtr.attrib	= INIT_LDTR_ATTRIBS;
+	vmsa->tr.limit		= AP_INIT_TR_LIMIT;
+	vmsa->tr.attrib		= INIT_TR_ATTRIBS;
+
+	vmsa->cr4		= cr4;
+	vmsa->cr0		= 0x10;
+	vmsa->dr7		= AP_DR7_RESET;
+	vmsa->dr6		= AP_INIT_DR6_DEFAULT;
+	vmsa->rflags		= AP_INIT_RFLAGS_DEFAULT;
+	vmsa->g_pat		= AP_INIT_GPAT_DEFAULT;
+	vmsa->xcr0		= AP_INIT_XCR0_DEFAULT;
+	vmsa->mxcsr		= AP_INIT_MXCSR_DEFAULT;
+	vmsa->x87_ftw		= AP_INIT_X87_FTW_DEFAULT;
+	vmsa->x87_fcw		= AP_INIT_X87_FCW_DEFAULT;
+
+	vmsa->efer		= EFER_SVME;
+
+	/*
+	 * Set SNP specific fields for VMSA:
+	 * 1. VMPL Level
+	 * 2. SEV_FEATURES: sev_status MSR right shifted 2 bits
+	 */
+	vmsa->vmpl		= 0;
+	vmsa->sev_features	= rdmsr(MSR_SEV_STATUS) >> 2;
+
+	/* Switch over the page to a VMSA page now */
+	ret = snp_set_vmsa(vmsa, true);
+
+	if (ret) {
+		printf("WARNING: VMSA page conversion failure.\n");
+		printf("return code: %d\n", ret);
+		return;
+	}
+
+	if (ghcb->save.rflags & X86_EFLAGS_IF)
+		irq_disable();
+
+	vc_ghcb_invalidate(ghcb);
+	ghcb_set_rax(ghcb, vmsa->sev_features);
+	ghcb_set_sw_exit_code(ghcb, SVM_VMGEXIT_AP_CREATION);
+	ghcb_set_sw_exit_info_1(ghcb, ((u64)apicid << 32) | SVM_VMGEXIT_AP_CREATE);
+	ghcb_set_sw_exit_info_2(ghcb, __pa(vmsa));
+
+	VMGEXIT();
+
+	if (!ghcb_sw_exit_info_1_is_valid(ghcb) ||
+	    (u32)(ghcb->save.sw_exit_info_1 &  0xffffffff)) {
+		printf("SEV-SNP AP Creation Error.\n");
+		return;
+	}
+
+	if (ghcb->save.rflags & X86_EFLAGS_IF)
+		irq_enable();
 }
