@@ -63,8 +63,6 @@ u32 initrd_size;
 static char env[ENV_SIZE];
 static struct mbi_bootinfo *bootinfo;
 
-#define HUGEPAGE_SIZE (1 << 21)
-
 #ifdef __x86_64__
 void find_highmem(void)
 {
