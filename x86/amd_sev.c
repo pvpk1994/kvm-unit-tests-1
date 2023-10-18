@@ -14,6 +14,8 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "alloc_page.h"
+#include "x86/vm.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -108,6 +110,8 @@ enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page)
 int main(void)
 {
 	int rtn;
+	unsigned long *vaddr;
+
 	struct ghcb *ghcb_page = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
 
 	rtn = test_sev_activation();
@@ -123,6 +127,14 @@ int main(void)
 	/* Perform AP support feature check */
 	if (!hv_snp_ap_feature_check(ghcb_page))
 		printf("SEV-SNP AP hypervisor feature is supported.\n");
+
+	setup_vm();
+	vaddr = alloc_page();
+	force_4k_page(vaddr);
+	rtn = set_page_decrypted_ghcb_msr((unsigned long)vaddr);
+
+	if (!rtn)
+		printf("Page state change successful.\n");
 
 	return report_summary();
 }

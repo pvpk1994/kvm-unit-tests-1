@@ -21,8 +21,23 @@
 #include "processor.h"
 #include "insn/insn.h"
 #include "svm.h"
+#include "alloc_page.h"
 
 #define GHCB_SHARED_BUF_SIZE    2032
+
+/*
+ * SNP Page state change operation
+ *
+ * GHCBData[55:52] - Page operation:
+ *	0x01 - page assignment, private
+ *	0x02 - page assignment, shared
+ *	0x03 - psmash (yet to be implemented)
+ *	0x04 - unsmash ( yet to be implemented)
+ */
+enum psc_op {
+	SNP_PAGE_STATE_PRIVATE = 1,
+	SNP_PAGE_STATE_SHARED = 2,
+};
 
 struct ghcb {
 	struct vmcb_save_area save;
@@ -35,6 +50,7 @@ struct ghcb {
 	u32 ghcb_usage;
 } __packed;
 
+#define _PAGE_ENC		(_AT(pteval_t, get_amd_sev_c_bit_mask()))
 #define GHCB_PROTO_OUR		0x0001UL
 #define GHCB_PROTOCOL_MAX	1ULL
 #define GHCB_DEFAULT_USAGE	0ULL
@@ -104,6 +120,7 @@ void handle_sev_es_vc(struct ex_regs *regs);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);
+enum es_result set_page_decrypted_ghcb_msr(unsigned long paddr);
 
 /* GHCB Accessor functions from Linux's include/asm/svm.h */
 
@@ -171,8 +188,22 @@ DEFINE_GHCB_ACCESSORS(xcr0)
 #define GHCB_MSR_INFO_MASK			(BIT_ULL(GHCB_DATA_LOW) - 1)
 #define GHCB_RESP_CODE(v)			((v) & GHCB_MSR_INFO_MASK)
 
+#define GHCB_MSR_PSC_REQ			0x14
+#define GHCB_MSR_PSC_RESP			0x15
 #define RMPADJUST_VMSA_PAGE_BIT			BIT(16)
 #define RMP_PG_SIZE_4K				0
+
+#define GHCB_MSR_PSC_REQ_GFN(gfn, op)				\
+	/* GHCBData[55:52] */					\
+	(((u64)((op) & 0xf) << 52)		|		\
+	/* GHCBData[51:12] */					\
+	((u64)((gfn) & GENMASK_ULL(39, 0)) << 12) |		\
+	/* GHCBData[11:0] */					\
+	GHCB_MSR_PSC_REQ)
+
+#define GHCB_MSR_PSC_RESP_VAL(val)		\
+	/* GHCBData[63:32] */			\
+	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
 
 /*
  * AP INIT values as documented in APM vol 2
@@ -222,6 +253,19 @@ static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 
 	return ret;
 }
+
+/*
+ * Macros to generate condition code outputs from inline assembly,
+ * The output operand must be type "bool".
+ */
+#ifdef __GCC_ASM_FLAG_OUTPUTS__
+# define CC_SET(c) "\n\t/* output condition code " #c "*/\n"
+# define CC_OUT(c) "=@cc" #c
+#else
+# define CC_SET(c) "\n\tset" #c " %[_cc_" #c "]\n"
+# define CC_OUT(c)[_cc_ ## c] "=qm"
+#endif
+
 #endif /* CONFIG_EFI */
 
 #endif /* _X86_AMD_SEV_H_ */
