@@ -21,8 +21,23 @@
 #include "processor.h"
 #include "insn/insn.h"
 #include "svm.h"
+#include "alloc_page.h"
 
 #define GHCB_SHARED_BUF_SIZE    2032
+
+/*
+ * SNP Page state change operation
+ *
+ * GHCBData[55:52] - Page operation:
+ *	0x01 - page assignment, private
+ *	0x02 - page assignment, shared
+ *	0x03 - psmash (yet to be implemented)
+ *	0x04 - unsmash ( yet to be implemented)
+ */
+enum psc_op {
+	SNP_PAGE_STATE_PRIVATE = 1,
+	SNP_PAGE_STATE_SHARED = 2,
+};
 
 struct ghcb {
 	struct vmcb_save_area save;
@@ -51,6 +66,8 @@ struct ghcb {
 #define GHCB_MSR_INFO(v)	((v) & 0xfffUL)
 #define GHCB_MSR_PROTO_MAX(v)	(((v) >> 48) & 0xffff)
 #define GHCB_MSR_PROTO_MIN(v)	(((v) >> 32) & 0xffff)
+
+#define _PAGE_ENC		(_AT(pteval_t, get_amd_sev_c_bit_mask()))
 
 #define GHCB_PROTO_OUR		0x0001UL
 #define GHCB_PROTOCOL_MIN	1ULL
@@ -119,9 +136,11 @@ bool amd_sev_snp_enabled(void);
 efi_status_t setup_amd_sev_es(void);
 void setup_ghcb_pte(pgd_t *page_table);
 void handle_sev_es_vc(struct ex_regs *regs);
+void sev_es_wr_ghcb_msr(u64 val);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);
+enum es_result set_page_decrypted_ghcb_msr(unsigned long paddr);
 
 /* GHCB Accessor functions from Linux's include/asm/svm.h */
 
@@ -183,8 +202,51 @@ DEFINE_GHCB_ACCESSORS(xcr0)
 #define GHCB_MSR_INFO_MASK			(BIT_ULL(GHCB_DATA_LOW) - 1)
 #define GHCB_RESP_CODE(v)			((v) & GHCB_MSR_INFO_MASK)
 
+#define GHCB_MSR_PSC_REQ			0x14
+#define GHCB_MSR_PSC_RESP			0x15
+#define RMPADJUST_VMSA_PAGE_BIT			BIT(16)
+#define RMP_PG_SIZE_4K				0
+
+#define GHCB_MSR_PSC_REQ_GFN(gfn, op)				\
+	/* GHCBData[55:52] */					\
+	(((u64)((op) & 0xf) << 52)		|		\
+	/* GHCBData[51:12] */					\
+	((u64)((gfn) & GENMASK_ULL(39, 0)) << 12) |		\
+	/* GHCBData[11:0] */					\
+	GHCB_MSR_PSC_REQ)
+
+#define GHCB_MSR_PSC_RESP_VAL(val)		\
+	/* GHCBData[63:32] */			\
+	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
+
 enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page);
 void get_ghcb_version(void);
+
+static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
+			    unsigned long attrs)
+{
+	int ret;
+
+	/* rmpadjust menominc support in binutils 2.36 and newer */
+	__asm__ __volatile__(".byte 0xF3, 0x0F, 0x01, 0xFE\n\t"
+			     : "=a"(ret)
+			     : "a"(vaddr), "c"(rmp_size), "d"(attrs)
+			     : "memory", "cc");
+
+	return ret;
+}
+
+/*
+ * Macros to generate condition code outputs from inline assembly,
+ * The output operand must be type "bool".
+ */
+#ifdef __GCC_ASM_FLAG_OUTPUTS__
+# define CC_SET(c) "\n\t/* output condition code " #c "*/\n"
+# define CC_OUT(c) "=@cc" #c
+#else
+# define CC_SET(c) "\n\tset" #c " %[_cc_" #c "]\n"
+# define CC_OUT(c)[_cc_ ## c] "=qm"
+#endif
 
 #endif /* CONFIG_EFI */
 
