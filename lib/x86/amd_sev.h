@@ -50,6 +50,11 @@ struct ghcb {
 	u32 ghcb_usage;
 } __packed;
 
+struct sev_es_runtime_data {
+	struct ghcb ghcb_page;
+	bool ghcb_active;
+};
+
 #define _PAGE_ENC		(_AT(pteval_t, get_amd_sev_c_bit_mask()))
 #define GHCB_PROTO_OUR		0x0001UL
 #define GHCB_PROTOCOL_MAX	1ULL
@@ -239,6 +244,7 @@ enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page);
 void bringup_snp_aps(int apicid);
 void vc_ghcb_invalidate(struct ghcb *ghcb_page);
 void sev_es_wr_ghcb_msr(u64 val);
+void sev_snp_init_ap_ghcb(void);
 
 static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 			    unsigned long attrs)

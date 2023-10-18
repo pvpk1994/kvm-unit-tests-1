@@ -457,3 +457,49 @@ enum es_result set_page_decrypted_ghcb_msr(unsigned long vaddr)
 {
 	return clr_page_flags(0, _PAGE_ENC, vaddr);
 }
+
+static inline void alloc_runtime_data(void)
+{
+	struct sev_es_runtime_data *data;
+
+	/* Enable alloc_page() for EFI builds */
+	setup_vm();
+
+	data = (struct sev_es_runtime_data *)alloc_page();
+	force_4k_page(data);
+
+	if (!data)
+		return;
+
+	/* Since BSP has entered cpu_relax() by now, this_cpu_* will
+	 * only read/write data to AP.
+	 */
+	this_cpu_write_runtime_data(data);
+}
+
+static inline void init_ghcb(void)
+{
+	struct sev_es_runtime_data *data;
+
+	data = this_cpu_read_runtime_data();
+
+	if (!data)
+		return;
+
+	/* This GHCB page needs to be decrypted, use GHCB MSR protocol */
+	if (set_page_decrypted_ghcb_msr((unsigned long)&data->ghcb_page))
+		return;
+
+	memset(&data->ghcb_page, 0, sizeof(data->ghcb_page));
+	data->ghcb_active = false;
+}
+
+void sev_snp_init_ap_ghcb(void)
+{
+	if (!amd_sev_snp_enabled())
+		return;
+
+	/* Allocate and initialize per-CPU GHCB page */
+	alloc_runtime_data();
+	init_ghcb();
+}
