@@ -402,6 +402,8 @@ void save_id(void)
 
 void ap_start64(void)
 {
+	if (amd_sev_snp_enabled())
+		sev_snp_init_ap_ghcb();
 	setup_gdt_tss();
 	reset_apic();
 	load_idt();

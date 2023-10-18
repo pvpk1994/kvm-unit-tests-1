@@ -67,6 +67,11 @@ struct ghcb {
 #define GHCB_MSR_PROTO_MAX(v)	(((v) >> 48) & 0xffff)
 #define GHCB_MSR_PROTO_MIN(v)	(((v) >> 32) & 0xffff)
 
+struct sev_es_runtime_data {
+	struct ghcb ghcb_page;
+	bool ghcb_active;
+};
+
 #define _PAGE_ENC		(_AT(pteval_t, get_amd_sev_c_bit_mask()))
 
 #define GHCB_PROTO_OUR		0x0001UL
@@ -222,6 +227,7 @@ DEFINE_GHCB_ACCESSORS(xcr0)
 u64 get_hv_features(struct ghcb *ghcb_page);
 enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page);
 void get_ghcb_version(void);
+void sev_snp_init_ap_ghcb(void);
 
 static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 			    unsigned long attrs)
