@@ -240,3 +240,101 @@ void get_ghcb_version(void)
 	/* Restore old GHCB MSR */
 	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
 }
+
+static inline int pvalidate(u64 vaddr, bool rmp_size,
+			    bool validate)
+{
+	bool rmp_unchanged;
+	int result;
+
+	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
+		     CC_SET(c)
+		     : CC_OUT(c) (rmp_unchanged), "=a" (result)
+		     : "a" (vaddr), "c" (rmp_size), "d" (validate)
+		     : "memory", "cc");
+
+	return rmp_unchanged ? 1 : result;
+}
+
+static inline enum es_result __page_state_change(unsigned long paddr,
+						 enum psc_op op)
+{
+	u64 val;
+
+	if (!amd_sev_snp_enabled())
+		return ES_UNSUPPORTED;
+
+	/* save the old GHCB MSR */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/*
+	 * If action requested is to convert page from private to shared,
+	 * then invalidate the page before we send it to hypervisor to
+	 * change state of page in RMP table.
+	 */
+	if (op == SNP_PAGE_STATE_SHARED &&
+	    pvalidate(paddr, RMP_PG_SIZE_4K, 0)) {
+		return ES_UNSUPPORTED;
+	}
+
+	/*
+	 * Issue VMGEXIT now to change state of page in RMP table
+	 */
+	sev_es_wr_ghcb_msr(GHCB_MSR_PSC_REQ_GFN(paddr >> PAGE_SHIFT, op));
+	VMGEXIT();
+
+	val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	/* Restore old GHCB MSR value */
+	sev_es_wr_ghcb_msr(ghcb_old_msr);
+
+	if (GHCB_RESP_CODE(val) != GHCB_MSR_PSC_RESP ||
+	    GHCB_MSR_PSC_RESP_VAL(val)) {
+		printf("PSC response code from hypervisor does not match expected response.\n");
+		return ES_UNSUPPORTED;
+	}
+
+	return ES_OK;
+}
+
+static inline enum es_result snp_set_page_shared(unsigned long paddr)
+{
+	return __page_state_change(paddr, SNP_PAGE_STATE_SHARED);
+}
+
+static inline void unset_c_bit_pte(unsigned long vaddr)
+{
+	pteval_t *pte;
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+	if (!pte) {
+		printf("WARNING: pte is null.\n");
+		assert(pte);
+	}
+
+	/* unset c-bit */
+	*pte &= ~(get_amd_sev_c_bit_mask());
+}
+
+static inline enum es_result clr_page_flags(pteval_t set, pteval_t clr,
+					    unsigned long vaddr)
+{
+	if (clr & _PAGE_ENC) {
+		/*
+		 * If the encryption bit is to be cleared, change the
+		 * state in the RMP table.
+		 */
+		snp_set_page_shared(__pa(vaddr & PAGE_MASK));
+		unset_c_bit_pte(vaddr);
+	}
+
+	flush_tlb();
+
+	return ES_OK;
+}
+
+enum es_result set_page_decrypted_ghcb_msr(unsigned long vaddr)
+{
+	return clr_page_flags(0, _PAGE_ENC, vaddr);
+}

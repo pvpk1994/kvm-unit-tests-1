@@ -14,6 +14,8 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "alloc_page.h"
+#include "x86/vm.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -108,6 +110,7 @@ enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page)
 int main(void)
 {
 	int rtn;
+
 	struct ghcb *ghcb_page = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
 
 	rtn = test_sev_activation();
