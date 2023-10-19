@@ -489,3 +489,31 @@ u8 get_local_apicid(void)
 
 	return local_apicid;
 }
+
+static inline void snp_register_ghcb(unsigned long pa)
+{
+	unsigned long pfn = pa >> PAGE_SHIFT;
+	u64 val;
+
+	sev_es_wr_ghcb_msr(GHCB_MSR_REG_GPA_REQ_VAL(pfn));
+	VMGEXIT();
+	val = rdmsr(MSR_AMD64_SEV_ES_GHCB);
+
+	if ((GHCB_RESP_CODE(val) != GHCB_MSR_REG_GPA_RESP) ||
+	    (GHCB_MSR_REG_GPA_RESP_VAL(val) != pfn)) {
+		printf("GHCB GPA registration failure.\n");
+		return;
+	}
+}
+
+void snp_register_per_cpu_ghcb(void)
+{
+	struct sev_es_runtime_data *data;
+	struct ghcb *ghcb;
+
+	data = this_cpu_read_runtime_data();
+	ghcb = &data->ghcb_page;
+
+	/* Identity mapping: va = pa */
+	snp_register_ghcb((unsigned long)ghcb);
+}

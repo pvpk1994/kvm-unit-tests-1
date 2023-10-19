@@ -406,10 +406,11 @@ void ap_start64(void)
 	if (amd_sev_snp_enabled()) {
 		sev_snp_init_ap_ghcb();
 		setup_amd_sev_es_vc();
+		snp_register_per_cpu_ghcb();
 	}
 	setup_gdt_tss();
-	reset_apic();
 	load_idt();
+	reset_apic();
 	save_id();
 	enable_apic();
 	enable_x2apic();

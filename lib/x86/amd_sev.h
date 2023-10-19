@@ -246,6 +246,18 @@ DEFINE_GHCB_ACCESSORS(xcr0)
 
 #define GHCB_MSR_PSC_REQ			0x14
 #define GHCB_MSR_PSC_RESP			0x15
+/* GHCB GPA Registration request and response */
+#define GHCB_MSR_REG_GPA_REQ			0x012
+#define GHCB_MSR_REG_GPA_REQ_VAL(v)			\
+	/* GHCBData[63:12] */				\
+	(((u64)((v) & GENMASK_ULL(51, 0)) << 12) |	\
+	/* GHCBData[11:0] */				\
+	GHCB_MSR_REG_GPA_REQ)
+#define GHCB_MSR_REG_GPA_RESP			0x013
+#define GHCB_MSR_REG_GPA_RESP_VAL(v)			\
+	/*GHCBData[63:12] */				\
+	(((u64)(v) & GENMASK_ULL(63, 12)) >> 12)
+
 #define RMPADJUST_VMSA_PAGE_BIT			BIT(16)
 #define RMP_PG_SIZE_4K				0
 
@@ -268,6 +280,7 @@ struct ghcb *get_ghcb(struct ghcb_state *state);
 void put_ghcb(struct ghcb_state *state);
 void vc_ghcb_invalidate(struct ghcb *ghcb);
 u8 get_local_apicid(void);
+void snp_register_per_cpu_ghcb(void);
 
 static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 			    unsigned long attrs)
