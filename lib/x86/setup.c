@@ -20,6 +20,7 @@
 #include "smp.h"
 
 extern char edata;
+extern u8 local_apicid;
 
 struct mbi_bootinfo {
 	u32 flags;
@@ -113,7 +114,8 @@ unsigned long setup_tss(u8 *stacktop)
 	u32 id;
 	tss64_t *tss_entry;
 
-	id = smp_id();
+	id = local_apicid;
+
 	/* Runtime address of current TSS */
 	tss_entry = &tss[id];
 

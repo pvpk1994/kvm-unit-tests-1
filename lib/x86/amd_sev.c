@@ -560,3 +560,49 @@ void snp_register_per_cpu_ghcb(void)
 	/* Identity mapping: va = pa */
 	snp_register_ghcb((unsigned long)ghcb);
 }
+
+static inline efi_status_t check_wrmsr_ghcb(u32 fn, int reg_idx,
+					    u32 *reg)
+{
+	/* Save old GHCB MSR value */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, GHCB_CPUID_REQ(fn, reg_idx));
+	VMGEXIT();
+
+	phys_addr_t ghcb_new_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	if (GHCB_RESP_CODE(ghcb_new_msr) != GHCB_MSR_CPUID_RESP)
+		return EFI_UNSUPPORTED;
+
+	*reg = (ghcb_new_msr >> 32);
+
+	/* Restore old GHCB MSR value */
+	sev_es_wr_ghcb_msr(ghcb_old_msr);
+
+	return EFI_SUCCESS;
+}
+
+u8 snp_cpuid(struct cpuid_leaf leaf, u32 i)
+{
+	efi_status_t ret;
+	u8 local_apicid;
+
+	leaf.fn = i;
+
+	ret = check_wrmsr_ghcb(leaf.fn, GHCB_CPUID_REQ_EAX,
+			       &leaf.eax);
+
+	ret = ret ? : check_wrmsr_ghcb(leaf.fn, GHCB_CPUID_REQ_EBX,
+				       &leaf.ebx);
+
+	ret = ret ? : check_wrmsr_ghcb(leaf.fn, GHCB_CPUID_REQ_ECX,
+				       &leaf.ecx);
+
+	ret = ret ? : check_wrmsr_ghcb(leaf.fn, GHCB_CPUID_REQ_EDX,
+				       &leaf.edx);
+
+	local_apicid = (u8)((leaf.ebx & GENMASK_ULL(31, 24)) >> 24);
+
+	return local_apicid;
+}

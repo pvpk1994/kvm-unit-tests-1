@@ -11,8 +11,10 @@
 #include "x86/xsave.h"
 #include "smp.h"
 #include "apic.h"
+#include <alloc.h>
 
 extern phys_addr_t ghcb_addr;
+u8 local_apicid;
 
 void vc_ghcb_invalidate(struct ghcb *ghcb)
 {
@@ -575,12 +577,19 @@ void handle_sev_es_vc(struct ex_regs *regs)
 {
 	struct ghcb *ghcb;
 	struct ghcb_state state;
+	struct cpuid_leaf leaf;
 	unsigned long exit_code = regs->error_code;
 	struct es_em_ctxt ctxt;
 	enum es_result result;
 
+	local_apicid = snp_cpuid(leaf, 0x00000001);
+
 	/* For AP #VC exception handling */
-	ghcb = get_ghcb(&state);
+	if (local_apicid != 0)
+		ghcb = get_ghcb(&state);
+
+	else
+		ghcb = (struct ghcb *)ghcb_addr;
 
 	if (!ghcb)
 		return;
@@ -589,7 +598,11 @@ void handle_sev_es_vc(struct ex_regs *regs)
 	result = vc_init_em_ctxt(&ctxt, regs, exit_code);
 	if (result == ES_OK)
 		result = vc_handle_exitcode(&ctxt, ghcb, exit_code);
-	put_ghcb(&state);
+
+	if (local_apicid != 0)
+		put_ghcb(&state);
+	else
+		ghcb = (struct ghcb *)ghcb_addr;
 
 	if (result == ES_OK) {
 		vc_finish_insn(&ctxt);
