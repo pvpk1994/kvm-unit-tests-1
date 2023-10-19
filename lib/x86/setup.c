@@ -110,10 +110,11 @@ void find_highmem(void)
 /* Setup TSS for the current processor, and return TSS offset within GDT */
 unsigned long setup_tss(u8 *stacktop)
 {
-	u32 id;
+	u8 id;
 	tss64_t *tss_entry;
 
-	id = pre_boot_apic_id();
+	id = get_local_apicid();
+
 	/* Runtime address of current TSS */
 	tss_entry = &tss[id];
 
@@ -367,13 +368,13 @@ efi_status_t setup_efi(efi_bootinfo_t *efi_bootinfo)
 	get_ghcb_version();
 	bsp_rest_init();
 
-//#ifndef AMDSEV_EFI_VC
+#ifndef AMDSEV_EFI_VC
 	/*
 	 * Switch away from the UEFI-installed #VC handler.
 	 * GHCB has already been mapped at this point.
 	 */
-//	setup_amd_sev_es_vc();
-//#endif /* AMDSEV_EFI_VC */
+	setup_amd_sev_es_vc();
+#endif /* AMDSEV_EFI_VC */
 
 	return EFI_SUCCESS;
 }

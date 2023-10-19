@@ -11,6 +11,7 @@
 #include "x86/xsave.h"
 #include "smp.h"
 #include "apic.h"
+#include <alloc.h>
 
 extern phys_addr_t ghcb_addr;
 
@@ -580,7 +581,11 @@ void handle_sev_es_vc(struct ex_regs *regs)
 	enum es_result result;
 
 	/* For AP #VC exception handling */
-	ghcb = get_ghcb(&state);
+	if (get_local_apicid())
+		ghcb = get_ghcb(&state);
+
+	else
+		ghcb = (struct ghcb *)ghcb_addr;
 
 	if (!ghcb)
 		return;
@@ -589,7 +594,11 @@ void handle_sev_es_vc(struct ex_regs *regs)
 	result = vc_init_em_ctxt(&ctxt, regs, exit_code);
 	if (result == ES_OK)
 		result = vc_handle_exitcode(&ctxt, ghcb, exit_code);
-	put_ghcb(&state);
+
+	if (get_local_apicid())
+		put_ghcb(&state);
+	else
+		ghcb = (struct ghcb *)ghcb_addr;
 
 	if (result == ES_OK) {
 		vc_finish_insn(&ctxt);
