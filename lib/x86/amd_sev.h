@@ -49,6 +49,15 @@ enum insn_mmio_type {
 	INSN_MMIO_MOVS,
 };
 
+struct cpuid_leaf {
+	uint32_t fn;
+	uint32_t subfn;
+	uint32_t eax;
+	uint32_t ebx;
+	uint32_t ecx;
+	uint32_t edx;
+};
+
 struct ghcb {
 	struct vmcb_save_area save;
 	u8 reserved_save[2048 - sizeof(struct vmcb_save_area)];
@@ -195,6 +204,19 @@ DEFINE_GHCB_ACCESSORS(sw_scratch)
 DEFINE_GHCB_ACCESSORS(xcr0)
 
 /* GHCB Hypervisor Feature request/response */
+#define GHCB_MSR_CPUID_REQ			0x004
+#define GHCB_MSR_CPUID_RESP			0x005
+#define GHCB_CPUID_REQ_EAX			0
+#define GHCB_CPUID_REQ_EBX			1
+#define GHCB_CPUID_REQ_ECX			2
+#define GHCB_CPUID_REQ_EDX			3
+#define GHCB_CPUID_REQ(fn, reg)			\
+	(GHCB_MSR_CPUID_REQ |			\
+	/* GHCBData[31:12] */			\
+	(((unsigned long)(reg) & 0x3) << 30)|	\
+	/* GHCBData[63:32] */			\
+	(((unsigned long)fn) << 32))
+
 #define GHCB_MSR_HV_FT_REQ			0x080
 #define GHCB_MSR_HV_FT_RESP			0x081
 #define GHCB_MSR_HV_FT_RESP_VAL(v)		\
@@ -276,6 +298,7 @@ void sev_snp_init_ap_ghcb(void);
 struct ghcb *get_ghcb(struct ghcb_state *state);
 void put_ghcb(struct ghcb_state *state);
 void snp_register_per_cpu_ghcb(void);
+u8 get_local_apicid(void);
 
 static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 			    unsigned long attrs)
