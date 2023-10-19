@@ -39,6 +39,16 @@ enum psc_op {
 	SNP_PAGE_STATE_SHARED = 2,
 };
 
+enum insn_mmio_type {
+	INSN_MMIO_DECODE_FAILURE,
+	INSN_MMIO_WRITE,
+	INSN_MMIO_WRITE_IMM,
+	INSN_MMIO_READ,
+	INSN_MMIO_READ_ZERO_EXTEND,
+	INSN_MMIO_READ_SIGN_EXTEND,
+	INSN_MMIO_MOVS,
+};
+
 struct ghcb {
 	struct vmcb_save_area save;
 	u8 reserved_save[2048 - sizeof(struct vmcb_save_area)];
@@ -49,6 +59,10 @@ struct ghcb {
 	u16 protocol_version;	/* negotiated SEV-ES/GHCB protocol version */
 	u32 ghcb_usage;
 } __packed;
+
+struct ghcb_state {
+	struct ghcb *ghcb;
+};
 
 struct sev_es_runtime_data {
 	struct ghcb ghcb_page;
@@ -230,6 +244,8 @@ DEFINE_GHCB_ACCESSORS(xcr0)
 #define AP_INIT_X87_FTW_DEFAULT			0x5555
 #define AP_INIT_X87_FCW_DEFAULT			0x40
 
+#define SVM_VMGEXIT_MMIO_READ			0x80000001
+#define SVM_VMGEXIT_MMIO_WRITE			0x80000002
 #define SVM_VMGEXIT_AP_CREATION			0x80000013
 #define SVM_VMGEXIT_AP_CREATE			1
 
@@ -245,6 +261,8 @@ void bringup_snp_aps(int apicid);
 void vc_ghcb_invalidate(struct ghcb *ghcb_page);
 void sev_es_wr_ghcb_msr(u64 val);
 void sev_snp_init_ap_ghcb(void);
+struct ghcb *get_ghcb(struct ghcb_state *state);
+void put_ghcb(struct ghcb_state *state);
 
 static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 			    unsigned long attrs)
