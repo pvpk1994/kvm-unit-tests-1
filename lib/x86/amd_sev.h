@@ -39,6 +39,16 @@ enum psc_op {
 	SNP_PAGE_STATE_SHARED = 2,
 };
 
+enum insn_mmio_type {
+	INSN_MMIO_DECODE_FAILURE,
+	INSN_MMIO_WRITE,
+	INSN_MMIO_WRITE_IMM,
+	INSN_MMIO_READ,
+	INSN_MMIO_READ_ZERO_EXTEND,
+	INSN_MMIO_READ_SIGN_EXTEND,
+	INSN_MMIO_MOVS,
+};
+
 struct ghcb {
 	struct vmcb_save_area save;
 	u8 reserved_save[2048 - sizeof(struct vmcb_save_area)];
@@ -66,6 +76,10 @@ struct ghcb {
 #define GHCB_MSR_INFO(v)	((v) & 0xfffUL)
 #define GHCB_MSR_PROTO_MAX(v)	(((v) >> 48) & 0xffff)
 #define GHCB_MSR_PROTO_MIN(v)	(((v) >> 32) & 0xffff)
+
+struct ghcb_state {
+	struct ghcb *ghcb;
+};
 
 struct sev_es_runtime_data {
 	struct ghcb ghcb_page;
@@ -228,6 +242,9 @@ u64 get_hv_features(struct ghcb *ghcb_page);
 enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page);
 void get_ghcb_version(void);
 void sev_snp_init_ap_ghcb(void);
+struct ghcb *get_ghcb(struct ghcb_state *state);
+void put_ghcb(struct ghcb_state *state);
+void vc_ghcb_invalidate(struct ghcb *ghcb);
 
 static inline int rmpadjust(unsigned long vaddr, bool rmp_size,
 			    unsigned long attrs)
