@@ -114,7 +114,6 @@ unsigned long setup_tss(u8 *stacktop)
 	tss64_t *tss_entry;
 
 	id = pre_boot_apic_id();
-
 	/* Runtime address of current TSS */
 	tss_entry = &tss[id];
 
@@ -133,7 +132,7 @@ unsigned long setup_tss(u8 *stacktop)
 	u32 id;
 	tss32_t *tss_entry;
 
-	id = pre_boot_apic_id();
+	id = smp_id();
 
 	/* Runtime address of current TSS */
 	tss_entry = &tss[id];
@@ -402,8 +401,10 @@ void save_id(void)
 
 void ap_start64(void)
 {
-	if (amd_sev_snp_enabled())
+	if (amd_sev_snp_enabled()) {
 		sev_snp_init_ap_ghcb();
+		setup_amd_sev_es_vc();
+	}
 	setup_gdt_tss();
 	reset_apic();
 	load_idt();
