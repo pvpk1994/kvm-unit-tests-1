@@ -110,10 +110,11 @@ void find_highmem(void)
 /* Setup TSS for the current processor, and return TSS offset within GDT */
 unsigned long setup_tss(u8 *stacktop)
 {
-	u32 id;
+	u8 id;
 	tss64_t *tss_entry;
 
-	id = pre_boot_apic_id();
+	id = get_local_apicid();
+
 	/* Runtime address of current TSS */
 	tss_entry = &tss[id];
 
