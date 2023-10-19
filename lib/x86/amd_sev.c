@@ -503,3 +503,33 @@ void sev_snp_init_ap_ghcb(void)
 	alloc_runtime_data();
 	init_ghcb();
 }
+
+struct ghcb *get_ghcb(struct ghcb_state *state)
+{
+	struct sev_es_runtime_data *data;
+	struct ghcb *ghcb;
+
+	data = this_cpu_read_runtime_data();
+	ghcb = &data->ghcb_page;
+
+	state->ghcb = NULL;
+	data->ghcb_active = true;
+
+	return ghcb;
+}
+
+void put_ghcb(struct ghcb_state *state)
+{
+	struct sev_es_runtime_data *data;
+	struct ghcb *ghcb;
+
+	data = this_cpu_read_runtime_data();
+	ghcb = &data->ghcb_page;
+
+	/* no backup ghcb support at the moment */
+	if (!state->ghcb) {
+		vc_ghcb_invalidate(ghcb);
+		data->ghcb_active = false;
+	}
+}
+

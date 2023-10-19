@@ -9,6 +9,8 @@
 #include "amd_sev.h"
 #include "svm.h"
 #include "x86/xsave.h"
+#include "smp.h"
+#include "apic.h"
 
 extern phys_addr_t ghcb_addr;
 
@@ -151,6 +153,9 @@ static enum es_result vc_handle_msr(struct ghcb *ghcb, struct es_em_ctxt *ctxt)
 	struct ex_regs *regs = ctxt->regs;
 	enum es_result ret;
 	u64 exit_info_1;
+
+	if (!ghcb)
+		return ES_UNSUPPORTED;
 
 	/* Is it a WRMSR? */
 	exit_info_1 = (ctxt->insn.opcode.bytes[1] == 0x30) ? 1 : 0;
@@ -441,6 +446,102 @@ static enum es_result vc_handle_ioio(struct ghcb *ghcb, struct es_em_ctxt *ctxt)
 	return ret;
 }
 
+static inline enum insn_mmio_type insn_decode_mmio(struct insn *insn,
+						   unsigned int *bytes)
+{
+	enum insn_mmio_type type = INSN_MMIO_DECODE_FAILURE;
+
+	*bytes = 0;
+
+	if (insn_get_opcode(insn)) {
+		printf("Decoding MMIO instruction failed.\n");
+		return INSN_MMIO_DECODE_FAILURE;
+	}
+
+	switch (insn->opcode.bytes[0]) {
+	case 0xa0:
+		*bytes = 1;
+		// fallthrough;
+	case 0xa1:
+		if (!*bytes)
+			*bytes = insn->x86_64 == 1 ? 8 : 0;
+		type = INSN_MMIO_READ;
+		break;
+	case 0xc7:
+		if (!*bytes)
+			*bytes = insn->opnd_bytes;
+		type = INSN_MMIO_WRITE_IMM;
+		break;
+	}
+
+	return type;
+}
+
+static inline enum es_result vc_do_mmio(struct ghcb *ghcb,
+					struct es_em_ctxt *ctxt,
+					unsigned int bytes, bool read)
+{
+	u64 exit_code, exit_info1, exit_info2;
+	unsigned long ghcb_pa = __pa(ghcb); // identity mapped.
+	phys_addr_t vaddr = 0;
+
+	memcpy(&vaddr, ctxt->insn.immediate1.bytes,
+	       ctxt->insn.immediate1.nbytes);
+
+	exit_code = read ? SVM_VMGEXIT_MMIO_READ :
+		    SVM_VMGEXIT_MMIO_WRITE;
+
+	exit_info1 = vaddr;
+	exit_info2 = bytes;
+
+	/*
+	 * GHCB Spec: #NPF MMIO Read/Write NAE event
+	 * exit_info1 has src guest physical addr.
+	 * exit_info2: bytes (should be 8 for 64-bit)
+	 * ghcb_sw_scratch: dst guest phys addr of shared mem
+	 */
+	ghcb_set_sw_scratch(ghcb, ghcb_pa + offsetof(struct ghcb,
+						     shared_buffer));
+
+	return sev_es_ghcb_hv_call(ghcb, ctxt, exit_code, exit_info1,
+				   exit_info2);
+}
+
+static inline enum es_result vc_handle_mmio(struct ghcb *ghcb,
+					    struct es_em_ctxt *ctxt)
+{
+	struct insn *insn = &ctxt->insn;
+	enum insn_mmio_type mmio;
+	unsigned int bytes = 0;
+	enum es_result ret;
+
+	mmio = insn_decode_mmio(insn, &bytes);
+
+	if (mmio == INSN_MMIO_DECODE_FAILURE)
+		return ES_DECODE_FAILED;
+
+	switch (mmio) {
+	case INSN_MMIO_WRITE_IMM:
+		memcpy(ghcb->shared_buffer,
+		       insn->immediate1.bytes, bytes);
+		ret = vc_do_mmio(ghcb, ctxt, bytes, false);
+		break;
+
+	case INSN_MMIO_READ:
+		memcpy(ghcb->shared_buffer,
+		       insn->immediate1.bytes, bytes);
+		ret = vc_do_mmio(ghcb, ctxt, bytes, false);
+		memcpy(&ctxt->regs->rax, ghcb->shared_buffer,
+		       bytes);
+		break;
+	default:
+		ret = ES_UNSUPPORTED;
+		break;
+	}
+
+	return ret;
+}
+
 static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 					 struct ghcb *ghcb,
 					 unsigned long exit_code)
@@ -457,6 +558,9 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 	case SVM_EXIT_IOIO:
 		result = vc_handle_ioio(ghcb, ctxt);
 		break;
+	case SVM_EXIT_NPF:
+		result = vc_handle_mmio(ghcb, ctxt);
+		break;
 	default:
 		/*
 		 * Unexpected #VC exception
@@ -469,20 +573,24 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 
 void handle_sev_es_vc(struct ex_regs *regs)
 {
-	struct ghcb *ghcb = (struct ghcb *) ghcb_addr;
+	struct ghcb *ghcb;
+	struct ghcb_state state;
 	unsigned long exit_code = regs->error_code;
 	struct es_em_ctxt ctxt;
 	enum es_result result;
 
-	if (!ghcb) {
-		/* TODO: kill guest */
+	/* For AP #VC exception handling */
+	ghcb = get_ghcb(&state);
+
+	if (!ghcb)
 		return;
-	}
 
 	vc_ghcb_invalidate(ghcb);
 	result = vc_init_em_ctxt(&ctxt, regs, exit_code);
 	if (result == ES_OK)
 		result = vc_handle_exitcode(&ctxt, ghcb, exit_code);
+	put_ghcb(&state);
+
 	if (result == ES_OK) {
 		vc_finish_insn(&ctxt);
 	} else {
