@@ -69,6 +69,15 @@ static void test_sev_es_activation(void)
 	}
 }
 
+static void test_sev_snp_activation(void)
+{
+	if (rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK) {
+		report_info("SEV-SNP is enabled");
+	} else {
+		report_skip("SEV-SNP is not enabled");
+	}
+}
+
 static void test_stringio(void)
 {
 	int st1_len = sizeof(st1) - 1;
@@ -92,6 +101,7 @@ int main(void)
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
+	test_sev_snp_activation();
 	test_stringio();
 	return report_summary();
 }
