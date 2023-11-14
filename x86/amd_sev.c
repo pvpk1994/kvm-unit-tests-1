@@ -20,6 +20,8 @@
 
 #define TESTDEV_IO_PORT 0xe0
 
+struct cc_blob_sev_info *snp_cc_blob;
+
 static char st1[] = "abcdefghijklmnop";
 
 static int test_sev_activation(void)
@@ -69,13 +71,39 @@ static void test_sev_es_activation(void)
 	}
 }
 
+/* Check to find if SEV-SNP's Confidential Computing Blob is present */
+static efi_status_t find_cc_blob_efi(void)
+{
+	efi_status_t status;
+
+	status = efi_get_system_config_table(EFI_CC_BLOB_GUID,
+					     (void **)&snp_cc_blob);
+
+	if (status != EFI_SUCCESS)
+		return status;
+
+	if (!snp_cc_blob)
+		return EFI_NOT_FOUND;
+
+	if (snp_cc_blob->magic != CC_BLOB_SEV_HDR_MAGIC)
+		return EFI_UNSUPPORTED;
+
+	return EFI_SUCCESS;
+}
+
 static void test_sev_snp_activation(void)
 {
+	efi_status_t status;
+
 	if (rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK) {
 		report_info("SEV-SNP is enabled");
 	} else {
 		report_skip("SEV-SNP is not enabled");
+		return;
 	}
+
+	status = find_cc_blob_efi();
+	report(status == EFI_SUCCESS, "SEV-SNP CC-blob presence");
 }
 
 static void test_stringio(void)
