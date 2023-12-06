@@ -68,6 +68,9 @@ typedef guid_t efi_guid_t;
 
 #define LOADED_IMAGE_PROTOCOL_GUID EFI_GUID(0x5b1b31a1, 0x9562, 0x11d2,  0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b)
 
+/* OVMF protocol GUIDs */
+#define OVMF_SEV_MEMORY_ACCEPTANCE_PROTOCOL_GUID EFI_GUID(0xc5a010fe, 0x38a7, 0x4531, 0x8a, 0x4a, 0x05, 0x00, 0xd2, 0xfd, 0x16, 0x49)
+
 typedef struct {
 	efi_guid_t guid;
 	void *table;
@@ -542,6 +545,22 @@ typedef struct {
 	efi_char16_t	file_name[1];
 } efi_file_info_t;
 
+typedef union sev_memory_acceptance_protocol sev_memory_acceptance_protocol_t;
+union sev_memory_acceptance_protocol {
+	struct {
+		efi_status_t (__efiapi *
+		allow_unaccepted_memory)(sev_memory_acceptance_protocol_t *);
+	};
+	struct {
+		u32 allow_unaccepted_memory;
+	} mixed_mode;
+};
+
+#define efi_fn_call(inst, func, ...)	(inst)->func(__VA_ARGS__)
+#define efi_call_proto(inst, func, ...) ({			\
+	__typeof__(inst) __inst = (inst);			\
+	efi_fn_call(__inst, func, __inst, ##__VA_ARGS__);	\
+})
 #define efi_bs_call(func, ...) efi_system_table->boottime->func(__VA_ARGS__)
 #define efi_rs_call(func, ...) efi_system_table->runtime->func(__VA_ARGS__)
 

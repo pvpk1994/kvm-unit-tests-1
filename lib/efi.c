@@ -70,6 +70,22 @@ out:
 	return status;
 }
 
+static void setup_unaccepted_memory(void)
+{
+	efi_guid_t mem_acceptance_proto = OVMF_SEV_MEMORY_ACCEPTANCE_PROTOCOL_GUID;
+	sev_memory_acceptance_protocol_t *proto;
+	efi_status_t status;
+
+	status = efi_bs_call(locate_protocol, &mem_acceptance_proto,
+			     NULL, (void **)&proto);
+	if (status != EFI_SUCCESS)
+		return;
+
+	status = efi_call_proto(proto, allow_unaccepted_memory);
+	if (status != EFI_SUCCESS)
+		printf("Memory acceptance protocol failed.\n");
+}
+
 efi_status_t efi_exit_boot_services(void *handle, struct efi_boot_memmap *map)
 {
 	return efi_bs_call(exit_boot_services, handle, *map->key_ptr);
@@ -351,7 +367,10 @@ efi_status_t efi_main(efi_handle_t handle, efi_system_table_t *sys_tab)
 		goto efi_main_error;
 	}
 
-	/* 
+	/* Enable unaccepted memory in UEFI */
+	setup_unaccepted_memory();
+
+	/*
 	 * Exit EFI boot services, let kvm-unit-tests take full control of the
 	 * guest
 	 */
