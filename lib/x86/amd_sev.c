@@ -169,3 +169,23 @@ unsigned long long get_amd_sev_addr_upperbound(void)
 		return PT_ADDR_UPPER_BOUND_DEFAULT;
 	}
 }
+
+bool amd_sev_snp_enabled(void)
+{
+	static bool sev_snp_enabled;
+	static bool initialized = false;
+
+	if (!initialized) {
+		sev_snp_enabled = false;
+		initialized = true;
+
+		if (!amd_sev_es_enabled())
+			return sev_snp_enabled;
+
+		/* Test if SEV-SNP is enabled */
+		sev_snp_enabled = rdmsr(MSR_SEV_STATUS) &
+				  SEV_SNP_ENABLED_MASK;
+	}
+
+	return sev_snp_enabled;
+}
