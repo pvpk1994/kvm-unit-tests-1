@@ -110,7 +110,6 @@ enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page)
 int main(void)
 {
 	int rtn;
-	unsigned long *vaddr;
 
 	struct ghcb *ghcb_page = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
 
@@ -129,14 +128,6 @@ int main(void)
 	/* Perform AP support feature check */
 	if (!hv_snp_ap_feature_check(ghcb_page))
 		printf("SEV-SNP AP Creation feature supported by hypervisor.\n");
-
-	setup_vm();
-	vaddr = alloc_page();
-	force_4k_page(vaddr);
-	rtn = set_page_decrypted_ghcb_msr((unsigned long)vaddr);
-
-	if (!rtn)
-		printf("Page state change successful.\n");
 
 	return report_summary();
 }

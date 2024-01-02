@@ -20,6 +20,7 @@
 #include "smp.h"
 
 extern char edata;
+extern int _cpu_count;
 
 struct mbi_bootinfo {
 	u32 flags;
@@ -363,7 +364,8 @@ efi_status_t setup_efi(efi_bootinfo_t *efi_bootinfo)
 	setup_page_table();
 	enable_apic();
 	save_id();
-	get_ghcb_version();
+	if (amd_sev_snp_enabled())
+		get_ghcb_version();
 	bsp_rest_init();
 
 #ifndef AMDSEV_EFI_VC
@@ -400,9 +402,12 @@ void save_id(void)
 
 void ap_start64(void)
 {
-	sev_snp_init_ap_ghcb();
-	setup_amd_sev_es_vc();
-	snp_register_per_cpu_ghcb();
+	if (amd_sev_snp_enabled()) {
+		sev_snp_init_ap_ghcb();
+		setup_amd_sev_es_vc();
+		snp_register_per_cpu_ghcb();
+	}
+
 	setup_gdt_tss();
 	load_idt();
 	reset_apic();
@@ -416,6 +421,7 @@ void bsp_rest_init(void)
 {
 	bringup_aps();
 	enable_x2apic();
-	smp_init();
+	if (!amd_sev_snp_enabled() || _cpu_count == 1)
+		smp_init();
 	pmu_init();
 }
