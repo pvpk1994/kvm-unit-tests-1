@@ -19,6 +19,7 @@
 #include "vmalloc.h"
 #include "asm/setup.h"
 
+#define AP_INIT_CR0_DEFAULT		0x60000010
 static u16 ghcb_version;
 static unsigned short amd_sev_c_bit_pos;
 phys_addr_t ghcb_addr;
@@ -199,7 +200,7 @@ bool amd_sev_snp_enabled(void)
 
 u64 get_hv_features(struct ghcb *ghcb_page)
 {
-	ghcb_page->protocol_version = ghcb_version;
+	ghcb_page->protocol_version = 2;
 	if (ghcb_page->protocol_version < 2) {
 		printf("GHCB protocol version has to be 2!\n");
 		return 0;
@@ -508,17 +509,31 @@ static inline int snp_set_vmsa(void *va, bool vmsa)
 {
 	u64 attrs;
 
-	/* Running at VMPL 0 allows kernel to change VMSA bit for a page
-	 * using RMPADJUST. However, for instr to succeed, we must
-	 * target permissions of a lesser privileged VMPL level.
-	 * Therefore, use VMPL level 1 (APM Vol 3 - RMPADJUST instr)
-	 */
 	attrs = 1;
 
 	if (vmsa)
 		attrs |= RMPADJUST_VMSA_PAGE_BIT;
 
 	return rmpadjust((unsigned long)va, RMP_PG_SIZE_4K, attrs);
+}
+
+static inline enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page)
+{
+        u64 result = get_hv_features(ghcb_page);
+
+        /* Check for hypervisor SEV-SNP feature support */
+        if (!(result & GHCB_HV_FT_SNP)) {
+                printf("Hypervisor SEV-SNP feature not supported.\n");
+                return ES_VMM_ERROR;
+        }
+
+        /* Now check for hypervisor SEV-SNP AP creation feature support */
+        if (!(result & GHCB_HV_FT_SNP_AP_CREATION)) {
+                printf("Hypervisor SEV-SNP AP creation feature not supported.\n");
+                return ES_UNSUPPORTED;
+        }
+
+        return ES_OK;
 }
 
 void bringup_snp_aps(int apicid)
@@ -534,13 +549,7 @@ void bringup_snp_aps(int apicid)
 		return;
 	}
 
-	/* To enable alloc_page() for EFI builds */
 	setup_vm();
-
-	/*
-	 * TODO: Account for VMSA related SNP erratum
-	 * This erratum exists for large 2M pages.
-	 */
 	vmsa = (struct sev_es_save_area *)alloc_page();
 	if (!vmsa) {
 		printf("VMSA page not allocated.\n");
@@ -554,14 +563,8 @@ void bringup_snp_aps(int apicid)
 		return;
 	}
 
-	/* CR4 must maintain MCE value */
 	cr4 = read_cr4() & X86_CR4_MCE;
 
-	/*
-	 * RM_TRAMPOLINE_ADDR is defined at addr 0x0.
-	 * sipi_vector becomes 0 and therefore cs.base, rip, and
-	 * cs.selector all are 0.
-	 */
 	vmsa->cs.base		= 0;
 	vmsa->cs.limit		= AP_INIT_CS_LIMIT;
 	vmsa->cs.attrib		= INIT_CS_ATTRIBS;
@@ -584,7 +587,7 @@ void bringup_snp_aps(int apicid)
 	vmsa->tr.attrib		= INIT_TR_ATTRIBS;
 
 	vmsa->cr4		= cr4;
-	vmsa->cr0		= 0x10;
+	vmsa->cr0		= AP_INIT_CR0_DEFAULT;
 	vmsa->dr7		= AP_DR7_RESET;
 	vmsa->dr6		= AP_INIT_DR6_DEFAULT;
 	vmsa->rflags		= AP_INIT_RFLAGS_DEFAULT;
@@ -596,15 +599,9 @@ void bringup_snp_aps(int apicid)
 
 	vmsa->efer		= EFER_SVME;
 
-	/*
-	 * Set SNP specific fields for VMSA:
-	 * 1. VMPL Level
-	 * 2. SEV_FEATURES: sev_status MSR right shifted 2 bits
-	 */
 	vmsa->vmpl		= 0;
 	vmsa->sev_features	= rdmsr(MSR_SEV_STATUS) >> 2;
 
-	/* Switch over the page to a VMSA page now */
 	ret = snp_set_vmsa(vmsa, true);
 
 	if (ret) {
@@ -625,7 +622,7 @@ void bringup_snp_aps(int apicid)
 	VMGEXIT();
 
 	if (!ghcb_sw_exit_info_1_is_valid(ghcb) ||
-	    (u32)(ghcb->save.sw_exit_info_1 &  0xffffffff)) {
+	    (u32)(ghcb->save.sw_exit_info_1 & 0xffffffff)) {
 		printf("SEV-SNP AP Creation Error.\n");
 		return;
 	}

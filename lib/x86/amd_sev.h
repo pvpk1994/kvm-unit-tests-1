@@ -274,7 +274,6 @@ DEFINE_GHCB_ACCESSORS(xcr0)
 	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
 
 u64 get_hv_features(struct ghcb *ghcb_page);
-enum es_result hv_snp_ap_feature_check(struct ghcb *ghcb_page);
 void get_ghcb_version(void);
 void sev_snp_init_ap_ghcb(void);
 struct ghcb *get_ghcb(struct ghcb_state *state);

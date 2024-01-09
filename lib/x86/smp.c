@@ -279,6 +279,7 @@ void bringup_aps(void)
 #endif
 
 	if (!amd_sev_snp_enabled()) {
+		printf("AMD SEV-SNP NOT enabled\n");
 		/* INIT */
 		apic_icr_write(APIC_DEST_ALLBUT | APIC_DEST_PHYSICAL |
 			       APIC_DM_INIT | APIC_INT_ASSERT, 0);
