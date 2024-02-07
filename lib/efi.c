@@ -124,12 +124,31 @@ efi_status_t efi_main(efi_handle_t handle, efi_system_table_t *sys_tab)
 		goto efi_main_error;
 	}
 
-	/* 
+	printf("****Memory map attributes****\n");
+	printf("Size of memory buffer (in bytes): %lu\n",
+		*efi_bootinfo.mem_map.map_size);
+	printf("Size of an EFI descriptor (in bytes): %lu\n",
+		*efi_bootinfo.mem_map.desc_size);
+	printf("EFI descriptor version: %u\n",
+		*efi_bootinfo.mem_map.desc_ver);
+	printf("Key of memory map: %lu\n",
+                *efi_bootinfo.mem_map.key_ptr);
+	printf("Type of EFI descriptor: %u\n",
+		(*efi_bootinfo.mem_map.map)->type);
+	printf("Physical address of first byte: 0x%lx\n",
+		(*efi_bootinfo.mem_map.map)->phys_addr);
+	printf("Virtual address of first byte: 0x%lx\n",
+		(*efi_bootinfo.mem_map.map)->virt_addr);
+	printf("Number of 4KB pages in memory region: %lu\n",
+		(*efi_bootinfo.mem_map.map)->num_pages);
+
+	/*
 	 * Exit EFI boot services, let kvm-unit-tests take full control of the
 	 * guest
 	 */
 	status = efi_exit_boot_services(handle, &efi_bootinfo.mem_map);
 	if (status != EFI_SUCCESS) {
+		printf("Status return val: 0x%lx\n", status);
 		printf("Failed to exit boot services\n");
 		goto efi_main_error;
 	}

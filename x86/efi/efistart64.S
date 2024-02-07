@@ -8,6 +8,7 @@
 /* Reserve stack in .data */
 .data
 .align PAGE_SIZE
+/* Reserving blocks of uninitialized locations */
 	. = . + PAGE_SIZE * MAX_TEST_CPUS
 .globl stacktop
 stacktop:
