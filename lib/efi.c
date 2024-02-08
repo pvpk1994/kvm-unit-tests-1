@@ -147,10 +147,20 @@ efi_status_t efi_main(efi_handle_t handle, efi_system_table_t *sys_tab)
 	 * guest
 	 */
 	status = efi_exit_boot_services(handle, &efi_bootinfo.mem_map);
-	if (status != EFI_SUCCESS) {
+	if (status == EFI_INVALID_PARAMETER) {
 		printf("Status return val: 0x%lx\n", status);
-		printf("Failed to exit boot services\n");
-		goto efi_main_error;
+		printf("Retrying with updated Memory map\n");
+		/* Retry exit boot services with updated map */
+		*efi_bootinfo.mem_map.map_size = *efi_bootinfo.mem_map.buff_size;
+		status = efi_bs_call(get_memory_map,
+				     efi_bootinfo.mem_map.map_size,
+				     efi_bootinfo.mem_map.map,
+				     efi_bootinfo.mem_map.key_ptr,
+				     efi_bootinfo.mem_map.desc_size,
+				     efi_bootinfo.mem_map.desc_ver);
+
+		if (status != EFI_SUCCESS)
+			goto efi_main_error;
 	}
 
 	/* Set up arch-specific resources */
