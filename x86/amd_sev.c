@@ -163,6 +163,11 @@ static inline efi_status_t snp_set_page_shared_ghcb_msr(unsigned long paddr)
 	return __page_state_change(paddr, SNP_PAGE_STATE_SHARED);
 }
 
+static inline efi_status_t snp_set_page_private_ghcb_msr(unsigned long paddr)
+{
+	return __page_state_change(paddr, SNP_PAGE_STATE_PRIVATE);
+}
+
 static inline void unset_c_bit_pte(unsigned long vaddr)
 {
 	pteval_t *pte;
@@ -176,6 +181,21 @@ static inline void unset_c_bit_pte(unsigned long vaddr)
 
 	/* unset c-bit */
 	*pte &= ~(get_amd_sev_c_bit_mask());
+}
+
+static inline void set_c_bit_pte(unsigned long vaddr)
+{
+	pteval_t *pte;
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+	if (!pte) {
+		printf("WARNING: pte is null.\n");
+		assert(pte);
+	}
+
+	/* set c-bit */
+	*pte |= get_amd_sev_c_bit_mask();
 }
 
 static inline void set_page_decrypted(unsigned long vaddr)
@@ -195,6 +215,21 @@ static inline void set_page_decrypted(unsigned long vaddr)
 	flush_tlb();
 	unset_c_bit_pte(vaddr);
 	flush_tlb();
+}
+
+static inline void set_page_encrypted(unsigned long vaddr)
+{
+	efi_status_t status;
+
+	flush_tlb();
+	set_c_bit_pte(vaddr);
+	flush_tlb();
+
+	status = snp_set_page_private_ghcb_msr(__pa(vaddr & PAGE_MASK));
+	if (status != ES_OK) {
+		printf("Page state change (Shared->Private) failure.\n");
+		return;
+	}
 }
 
 static void test_sev_snp_activation(void)
@@ -268,6 +303,12 @@ static void test_page_state_change(void)
 		strcpy((char *)vaddr, st1);
 		report(!strcmp((char *)vaddr, st1), "Write to unencrypted page after private->shared conversion");
 	}
+
+	printf("Shared->Private conversion test.\n");
+	set_page_encrypted((unsigned long)vaddr);
+
+	strcpy((char *)vaddr, st1);
+	report(!strcmp((char *)vaddr, st1), "Write to encrypted page after shared->private conversion");
 }
 
 int main(void)
