@@ -12,7 +12,7 @@
 
 extern phys_addr_t ghcb_addr;
 
-static void vc_ghcb_invalidate(struct ghcb *ghcb)
+void vc_ghcb_invalidate(struct ghcb *ghcb)
 {
 	ghcb->save.sw_exit_code = 0;
 	memset(ghcb->save.valid_bitmap, 0, sizeof(ghcb->save.valid_bitmap));

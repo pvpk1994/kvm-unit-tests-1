@@ -362,6 +362,7 @@ struct __attribute__ ((__packed__)) vmcb {
 #define SVM_EXIT_NPF  		0x400
 
 #define SVM_EXIT_ERR		-1
+#define SVM_VMGEXIT_PSC		0x80000010
 
 #define SVM_CR0_SELECTIVE_MASK (X86_CR0_TS | X86_CR0_MP)
 
