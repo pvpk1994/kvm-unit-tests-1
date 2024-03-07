@@ -351,14 +351,29 @@ efi_status_t efi_main(efi_handle_t handle, efi_system_table_t *sys_tab)
 		goto efi_main_error;
 	}
 
-	/* 
+	/*
 	 * Exit EFI boot services, let kvm-unit-tests take full control of the
-	 * guest
+	 * guest.
+	 * There is a possibility that memory map might have changed
+	 * between efi_get_memory_map() and efi_exit_boot_services in
+	 * which case status is EFI_INVALID_PARAMETER. As per UEFI spec
+	 * 2.10, we need to get the updated memory map and try again.
 	 */
 	status = efi_exit_boot_services(handle, &efi_bootinfo.mem_map);
-	if (status != EFI_SUCCESS) {
-		printf("Failed to exit boot services\n");
-		goto efi_main_error;
+	if (status == EFI_INVALID_PARAMETER) {
+		efi_bs_call(get_memory_map,
+			    efi_bootinfo.mem_map.map_size,
+			    efi_bootinfo.mem_map.map,
+			    efi_bootinfo.mem_map.key_ptr,
+			    efi_bootinfo.mem_map.desc_size,
+			    efi_bootinfo.mem_map.desc_ver);
+
+		status = efi_bs_call(exit_boot_services, handle,
+				     *efi_bootinfo.mem_map.key_ptr);
+		if (status != EFI_SUCCESS) {
+			printf("Failed to exit boot services\n");
+			goto efi_main_error;
+		}
 	}
 
 	/* Set up arch-specific resources */
