@@ -494,6 +494,19 @@ static void unset_c_bit_ptes(unsigned long vaddr, int npages)
 	}
 }
 
+static void set_c_bit_ptes(unsigned long vaddr, int npages)
+{
+	unsigned long vaddr_end = vaddr + (npages << PAGE_SHIFT);
+
+	while (vaddr < vaddr_end) {
+		flush_tlb();
+		set_c_bit_pte(vaddr);
+		flush_tlb();
+
+		vaddr += PAGE_SIZE;
+	}
+}
+
 static int test_read_write(unsigned long vaddr, int npages)
 {
 	unsigned long vaddr_end = vaddr + (npages << PAGE_SHIFT);
@@ -546,6 +559,18 @@ static void test_psc_ghcb_nae(int order)
 	report(!test_read_write((unsigned long)vm_pages, 1 << order),
 	       "Write to %d un-encrypted pages after private->shared conversion",
 	       1 << order);
+
+
+	set_c_bit_ptes((unsigned long)vm_pages, 1 << order);
+
+	/* Shared->Private operations */
+	set_pages_state((unsigned long)vm_pages, 1 << order,
+			SNP_PAGE_STATE_PRIVATE, ghcb, large_page);
+
+	report(!test_read_write((unsigned long)vm_pages, 1 << order),
+	       "Write to %d encrypted pages after shared->private conversion",
+	       1 << order);
+
 }
 
 int main(void)
