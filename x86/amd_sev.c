@@ -328,12 +328,14 @@ static void pvalidate_pages(struct snp_psc_desc *desc)
 			for (; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
 				pvalidate_result = pvalidate(vaddr, RMP_PG_SIZE_4K,
 							     validate);
-				if (pvalidate_result)
+				if (pvalidate_result &&
+				    pvalidate_result != PVALIDATE_FAIL_NOUPDATE)
 					break;
 			}
 		}
 
-		if (pvalidate_result) {
+		if (pvalidate_result &&
+		    pvalidate_result != PVALIDATE_FAIL_NOUPDATE ) {
 			printf("Failed to validate address: 0x%lx ret: %d\n",
 			       vaddr, pvalidate_result);
 			return;
@@ -573,6 +575,85 @@ static void test_psc_ghcb_nae(int order)
 
 }
 
+static void test_partial_2m_private(unsigned long vaddr, struct ghcb *ghcb,
+				    bool large_page, pteval_t *pte)
+{
+	/* Sets c-bit on 2M PMD */
+	flush_tlb();
+	*pte |= get_amd_sev_c_bit_mask();
+
+	/* Step-3: Convert the whole 2M range back to private */
+	set_pages_state(vaddr, 512, SNP_PAGE_STATE_PRIVATE, ghcb,
+			large_page);
+
+	report(!test_read_write(vaddr, 512),
+	       "Write to 2M encrypted range");
+}
+
+static void test_partial_psc(void)
+{
+	unsigned long *vm_page;
+	bool large_page = false;
+	pteval_t *pte;
+
+	/* Allocate 2^9 = 1 2M page */
+	vm_page = alloc_pages(9);
+	if (!vm_page) {
+		printf("Page allocation failure.\n");
+		return;
+	}
+
+	pte = get_pte_level((pgd_t *)read_cr3(), (void *)vm_page, 1);
+	if (pte) {
+		printf("This test needs large page allocation only.\n");
+		return;
+	}
+
+	if (!pte && IS_ALIGNED((unsigned long)vm_page, LARGE_PAGE_SIZE)) {
+		install_large_page((pgd_t *)read_cr3(), (phys_addr_t)vm_page,
+				   (void *)(ulong)vm_page);
+		large_page = true;
+	}
+
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	/* Step-1: Convert the 2M range into shared */
+	set_pages_state((unsigned long)vm_page, 512,
+			SNP_PAGE_STATE_SHARED, ghcb, large_page);
+
+	pte = get_pte_level((pgd_t *)read_cr3(), (void *)vm_page, 2);
+	if (!pte)
+		printf("Invalid PTE.\n");
+
+	/* Unset c-bit on 2M PMD after step-1 */
+	flush_tlb();
+	*pte &= ~(get_amd_sev_c_bit_mask());
+
+	report(!test_read_write((unsigned long)vm_page, 512),
+	       "Write to 2M un-encrypted range");
+
+	flush_tlb();
+	*pte |= get_amd_sev_c_bit_mask();
+
+	/*
+	 * Step-2: Convert half sub-pages into private and leave other
+	 * half in shared states.
+	 */
+	set_pages_state((unsigned long)vm_page, 256,
+			SNP_PAGE_STATE_PRIVATE, ghcb, false);
+
+	report(!test_read_write((unsigned long)vm_page, 256),
+	       "Write to 256 4K private pages within 2M un-encrpyted page");
+
+	flush_tlb();
+	*pte &= ~(get_amd_sev_c_bit_mask());
+	report(!test_read_write((unsigned long)vm_page + 256 * PAGE_SIZE, 256),
+	       "Write to 256 4K shared pages within 2M un-encrypted page");
+
+	test_partial_2m_private((unsigned long)vm_page, ghcb,
+				large_page, pte);
+}
+
 int main(void)
 {
 	int rtn, order = 15;
@@ -584,5 +665,6 @@ int main(void)
 	setup_vm();
 	test_page_state_change();
 	test_psc_ghcb_nae(order);
+	test_partial_psc();
 	return report_summary();
 }
