@@ -590,7 +590,33 @@ static void test_partial_2m_private(unsigned long vaddr, struct ghcb *ghcb,
 	       "Write to 2M encrypted range");
 }
 
-static void test_partial_psc(void)
+static void test_partial_2m_shared(unsigned long vaddr, struct ghcb *ghcb,
+				   bool large_page, pteval_t *pte)
+{
+	/*
+	 * Conversion to 2M private->shared will generate a #PF
+	 * exception, since the c-bit is currently unset on the PMD.
+	 * Reset it.
+	 */
+	flush_tlb();
+	*pte |= get_amd_sev_c_bit_mask();
+
+	set_pages_state(vaddr, 512, SNP_PAGE_STATE_PRIVATE, ghcb,
+			large_page);
+
+	/* Step-3: Convert the whole 2M range from private to shared */
+	set_pages_state(vaddr, 512, SNP_PAGE_STATE_SHARED, ghcb,
+			large_page);
+
+	/* Unset c-bit of PMD */
+	flush_tlb();
+	*pte &= ~(get_amd_sev_c_bit_mask());
+
+	report(!test_read_write(vaddr, 512),
+	       "Write to 2M un-encrypted range");
+}
+
+static void test_partial_psc(bool is_private)
 {
 	unsigned long *vm_page;
 	bool large_page = false;
@@ -645,18 +671,22 @@ static void test_partial_psc(void)
 	report(!test_read_write((unsigned long)vm_page, 256),
 	       "Write to 256 4K private pages within 2M un-encrpyted page");
 
+
 	flush_tlb();
 	*pte &= ~(get_amd_sev_c_bit_mask());
 	report(!test_read_write((unsigned long)vm_page + 256 * PAGE_SIZE, 256),
 	       "Write to 256 4K shared pages within 2M un-encrypted page");
 
-	test_partial_2m_private((unsigned long)vm_page, ghcb,
-				large_page, pte);
+	is_private ?
+	test_partial_2m_private((unsigned long)vm_page, ghcb, large_page, pte) :
+	test_partial_2m_shared((unsigned long)vm_page, ghcb, large_page, pte);
 }
 
 int main(void)
 {
 	int rtn, order = 15;
+	bool is_private = false;
+
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
@@ -665,6 +695,6 @@ int main(void)
 	setup_vm();
 	test_page_state_change();
 	test_psc_ghcb_nae(order);
-	test_partial_psc();
+	test_partial_psc(is_private);
 	return report_summary();
 }
