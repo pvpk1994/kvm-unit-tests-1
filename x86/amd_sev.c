@@ -549,6 +549,18 @@ static void test_sev_psc_ghcb_nae(int order)
 	report(!test_read_write((unsigned long)vm_pages, 1 << order),
 	       "Write to %d un-encrypted pages after private->shared conversion",
 	       1 << order);
+
+	/* Shared->Private operations */
+	report_info("Shared->Private conversion test using GHCB NAE");
+
+	set_pte_encrypted((unsigned long)vm_pages, 1 << order);
+	flush_tlb();
+
+	sev_set_pages_state((unsigned long)vm_pages, 1 << order,
+			    SNP_PAGE_STATE_PRIVATE, ghcb, large_page);
+	report(!test_read_write((unsigned long)vm_pages, 1 << order),
+	       "Write to %d encrypted pages after shared->private conversion",
+	       1 << order);
 }
 
 int main(void)
