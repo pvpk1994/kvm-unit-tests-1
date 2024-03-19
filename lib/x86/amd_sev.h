@@ -83,6 +83,8 @@ struct ghcb {
 
 /* When rFlags.CF = 1 */
 #define PVALIDATE_FAIL_NOUPDATE	255
+/* PVALIDATE return code */
+#define PVALIDATE_FAIL_SIZE_MISMATCH	6
 
 enum es_result {
 	ES_OK,			/* All good */
@@ -157,6 +159,7 @@ efi_status_t setup_amd_sev(void);
  *   - Section "GHCB"
  */
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
+#define VMGEXIT_PSC_MAX_ENTRY 253
 
 #define GHCB_DATA_LOW		12
 #define GHCB_MSR_INFO_MASK	(BIT_ULL(GHCB_DATA_LOW) - 1)
@@ -177,6 +180,8 @@ enum psc_op {
 };
 
 #define RMP_PG_SIZE_4K		0
+#define RMP_PG_SIZE_2M		1
+
 #define GHCB_MSR_PSC_REQ	0x14
 #define GHCB_MSR_PSC_REQ_GFN(gfn, op)				\
 	/* GHCBData[55:52] */					\
@@ -191,11 +196,31 @@ enum psc_op {
 	/* GHCBData[63:32] */			\
 	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
 
+struct psc_hdr {
+	u16 cur_entry;
+	u16 end_entry;
+	u32 reserved;
+};
+
+struct psc_entry {
+	u64 cur_page	: 12;
+	u64 gfn		: 40;
+	u64 operation	: 4;
+	u64 pagesize	: 1;
+	u64 reserved	: 7;
+};
+
+struct snp_psc_desc {
+	struct psc_hdr hdr;
+	struct psc_entry entries[VMGEXIT_PSC_MAX_ENTRY];
+};
+
 bool amd_sev_es_enabled(void);
 efi_status_t setup_vc_handler(void);
 bool amd_sev_snp_enabled(void);
 void setup_ghcb_pte(pgd_t *page_table);
 void handle_sev_es_vc(struct ex_regs *regs);
+void vc_ghcb_invalidate(struct ghcb *ghcb);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);
