@@ -516,6 +516,21 @@ static void test_sev_psc_ghcb_msr(int order)
 
 }
 
+static int validate_page_state(u64 vaddr, bool rmp_size, bool state)
+{
+	int i;
+	int npages = rmp_size ? 512 : 1;
+
+	for (i = 0; i < npages; i++) {
+		int ret = pvalidate(vaddr, rmp_size, state);
+
+		if (ret != PVALIDATE_FAIL_NOUPDATE)
+			return ret;
+	}
+
+	return 0;
+}
+
 static void test_sev_psc_ghcb_nae(int order)
 {
 	pteval_t *pte;
@@ -541,6 +556,7 @@ static void test_sev_psc_ghcb_nae(int order)
 	}
 
 	report_info("Private->Shared conversion test using GHCB NAE");
+
 	/* Private->Shared operations */
 	sev_set_pages_state((unsigned long)vm_pages, 1 << order,
 			    SNP_PAGE_STATE_SHARED, ghcb, large_page);
@@ -579,7 +595,38 @@ static void __test_sev_psc_private(unsigned long vaddr, struct ghcb *ghcb,
 	report(!test_read_write(vaddr, 512), "Write to 2M encrypted range");
 }
 
-static void test_sev_psc_intermix(void)
+static void __test_sev_psc_shared(unsigned long vaddr, struct ghcb *ghcb,
+				  bool large_page, pteval_t *pte)
+{
+	int ret;
+	/*
+	 * Conversion to 2M private->shared will generate a #PF exception,
+	 * since the c-bit is currently unset on the PMD.
+	 * Reset it.
+	 */
+	*pte |= get_amd_sev_c_bit_mask();
+	flush_tlb();
+
+	sev_set_pages_state(vaddr, 512, SNP_PAGE_STATE_PRIVATE, ghcb,
+			    large_page);
+
+	ret = validate_page_state(vaddr, large_page, SNP_PAGE_STATE_PRIVATE);
+
+	if (ret == PVALIDATE_FAIL_SIZE_MISMATCH)
+		report_info("Page size mismatch between guest(2M) and RMP entry(4K)");
+
+	/* Step-3: Convert the whole range from private to shared */
+	sev_set_pages_state(vaddr, 512, SNP_PAGE_STATE_SHARED, ghcb,
+			    large_page);
+
+	/* Unset the c-bit before writing into these shared pages */
+	*pte &= ~(get_amd_sev_c_bit_mask());
+	flush_tlb();
+
+	report(!test_read_write(vaddr, 512), "Write to 2M un-encrypted range");
+}
+
+static void test_sev_psc_intermix(bool is_private)
 {
 	unsigned long *vm_page;
 	bool large_page = false;
@@ -633,6 +680,10 @@ static void test_sev_psc_intermix(void)
 	sev_set_pages_state((unsigned long)vm_page, 256,
 			    SNP_PAGE_STATE_PRIVATE, ghcb, false);
 
+	report(!validate_page_state((unsigned long)vm_page, false,
+				    SNP_PAGE_STATE_PRIVATE),
+	       "Page state expected: Private");
+
 	report(!test_read_write((unsigned long)vm_page, 256),
 	       "Write to 256 4K private pages within 2M un-encrpyted page");
 
@@ -646,12 +697,16 @@ static void test_sev_psc_intermix(void)
 	report(!test_read_write((unsigned long)vm_page + 256 * PAGE_SIZE, 256),
 	       "Write to 256 4K shared pages within 2M un-encrypted page");
 
-	__test_sev_psc_private((unsigned long)vm_page, ghcb, large_page, pte);
+	is_private ?
+	__test_sev_psc_private((unsigned long)vm_page, ghcb, large_page, pte) :
+	__test_sev_psc_shared((unsigned long)vm_page, ghcb, large_page, pte);
 }
 
 int main(void)
 {
 	int rtn;
+	bool is_private = false;
+
 	rtn = test_sev_activation();
 	report(rtn == EXIT_SUCCESS, "SEV activation test.");
 	test_sev_es_activation();
@@ -662,7 +717,7 @@ int main(void)
 	if (amd_sev_snp_enabled()) {
 		test_sev_psc_ghcb_msr(10);
 		test_sev_psc_ghcb_nae(15);
-		test_sev_psc_intermix();
+		test_sev_psc_intermix(is_private);
 	}
 	return report_summary();
 }
