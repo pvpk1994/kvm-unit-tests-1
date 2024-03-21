@@ -516,19 +516,39 @@ static void test_sev_psc_ghcb_msr(int order)
 
 }
 
-static int validate_page_state(u64 vaddr, bool rmp_size, bool state)
+/*
+ * Perform page revalidation to ensure pages are in expected state and
+ * an attempt to perform same 'pvalidate' operation as the current
+ * page's state results in PVALIDATE_FAIL_NOUPDATE
+ */
+static bool validate_page_state(u64 vaddr, bool rmp_size, bool state)
 {
-	int i;
-	int npages = rmp_size ? 512 : 1;
+	int ret;
 
-	for (i = 0; i < npages; i++) {
-		int ret = pvalidate(vaddr, rmp_size, state);
+	/* Attempt a pvalidate here again for the provided page size */
+	ret = pvalidate(vaddr, rmp_size, state);
 
-		if (ret != PVALIDATE_FAIL_NOUPDATE)
-			return ret;
+	if (ret == PVALIDATE_FAIL_NOUPDATE)
+		return true;
+
+	/*
+	 * If PVALIDATE_FAIL_SIZE_MISMATCH; Entry in the RMP is 4K, and
+	 * what guest is providing is 2M entry, so fall-back to
+	 * pvalidating 4K entries
+	 */
+	if (rmp_size && ret == PVALIDATE_FAIL_SIZE_MISMATCH) {
+		unsigned long vaddr_end = vaddr + LARGE_PAGE_SIZE;
+
+		for(; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
+			/* Now pvalidate with a 4K entry matching with RMP entry size. */
+			ret = pvalidate(vaddr, RMP_PG_SIZE_4K, state);
+
+			if (ret != PVALIDATE_FAIL_NOUPDATE)
+				return false;
+		}
 	}
 
-	return 0;
+	return true;
 }
 
 static void test_sev_psc_ghcb_nae(int order)
@@ -619,6 +639,15 @@ static void __test_sev_psc_shared(unsigned long vaddr, struct ghcb *ghcb,
 	sev_set_pages_state(vaddr, 512, SNP_PAGE_STATE_SHARED, ghcb,
 			    large_page);
 
+	/*
+	 * Now that whole 2M range has been converted to shared, try
+	 * re-validating this 2M shared page with SNP_PAGE_STATE_SHARED
+	 * operation to expect a PVALIDATE_FAIL_NOUPDATE
+	 */
+	report(validate_page_state(vaddr, large_page,
+				   SNP_PAGE_STATE_SHARED),
+	       "Expected state: Shared");
+
 	/* Unset the c-bit before writing into these shared pages */
 	*pte &= ~(get_amd_sev_c_bit_mask());
 	flush_tlb();
@@ -657,6 +686,11 @@ static void test_sev_psc_intermix(bool is_private)
 			    SNP_PAGE_STATE_SHARED, ghcb,
 			    large_page);
 
+	/* Failing here with a memory fault... */
+	report(validate_page_state((unsigned long)vm_page, large_page,
+				   SNP_PAGE_STATE_SHARED),
+	       "Expected State: SHared");
+
 	pte = get_pte_level((pgd_t *)read_cr3(), (void *)vm_page, 2);
 	if (!pte) {
 		assert_msg(pte, "Invalid PTE");
@@ -680,7 +714,7 @@ static void test_sev_psc_intermix(bool is_private)
 	sev_set_pages_state((unsigned long)vm_page, 256,
 			    SNP_PAGE_STATE_PRIVATE, ghcb, false);
 
-	report(!validate_page_state((unsigned long)vm_page, false,
+	report(validate_page_state((unsigned long)vm_page, false,
 				    SNP_PAGE_STATE_PRIVATE),
 	       "Page state expected: Private");
 
