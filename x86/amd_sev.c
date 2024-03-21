@@ -215,18 +215,11 @@ static inline void set_page_decrypted(unsigned long vaddr)
 		return;
 	}
 
-	flush_tlb();
-	unset_c_bit_pte(vaddr);
-	flush_tlb();
 }
 
 static inline void set_page_encrypted(unsigned long vaddr)
 {
 	efi_status_t status;
-
-	flush_tlb();
-	set_c_bit_pte(vaddr);
-	flush_tlb();
 
 	status = snp_set_page_private_ghcb_msr(__pa(vaddr & PAGE_MASK));
 	if (status != ES_OK) {
@@ -441,6 +434,41 @@ static void test_stringio(void)
 	report((got & 0xff00) >> 8 == st1[sizeof(st1) - 2], "outsb up");
 }
 
+/*
+ * Perform page revalidation to ensure pages are in expected state and
+ * an attempt to perform same 'pvalidate' operation as the current
+ * page's state results in PVALIDATE_FAIL_NOUPDATE
+ */
+static bool validate_page_state(u64 vaddr, bool rmp_size, bool state)
+{
+	int ret;
+
+	/* Attempt a pvalidate here again for the provided page size */
+	ret = pvalidate(vaddr, rmp_size, state);
+
+	if (ret == PVALIDATE_FAIL_NOUPDATE)
+		return true;
+
+	/*
+	 * If PVALIDATE_FAIL_SIZE_MISMATCH; Entry in the RMP is 4K, and
+	 * what guest is providing is 2M entry, so fall-back to
+	 * pvalidating 4K entries
+	 */
+	if (rmp_size && ret == PVALIDATE_FAIL_SIZE_MISMATCH) {
+		unsigned long vaddr_end = vaddr + LARGE_PAGE_SIZE;
+
+		for(; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
+			/* Now pvalidate with a 4K entry matching with RMP entry size. */
+			ret = pvalidate(vaddr, RMP_PG_SIZE_4K, state);
+
+			if (ret != PVALIDATE_FAIL_NOUPDATE)
+				return false;
+		}
+	}
+
+	return true;
+}
+
 static void test_page_state_change(void)
 {
 	pteval_t *pte;
@@ -468,17 +496,35 @@ static void test_page_state_change(void)
 
 	if (*pte & get_amd_sev_c_bit_mask()) {
 		printf("Private->Shared conversion test.\n");
+
+		report(validate_page_state((unsigned long)vaddr, false,
+					   SNP_PAGE_STATE_PRIVATE),
+		       "Expected State: Private");
+
 		/* Perform Private->Shared page state change */
 		strcpy((char *)vaddr, st1);
 		report(!strcmp((char *)vaddr, st1), "Write to encrypted page before private->shared conversion");
 
 		set_page_decrypted((unsigned long)vaddr);
+		report(validate_page_state((unsigned long)vaddr, false,
+					   SNP_PAGE_STATE_SHARED),
+		       "Expected State: Shared");
+
+		/* Since its a shared page now, unset c-bit just before
+		 writing to this page. */
+		unset_c_bit_pte((unsigned long)vaddr);
+		flush_tlb();
 
 		strcpy((char *)vaddr, st1);
 		report(!strcmp((char *)vaddr, st1), "Write to unencrypted page after private->shared conversion");
 	}
 
 	printf("Shared->Private conversion test.\n");
+
+	/* Set c-bit before conversion to private */
+	set_c_bit_pte((unsigned long)vaddr);
+	flush_tlb();
+
 	set_page_encrypted((unsigned long)vaddr);
 
 	strcpy((char *)vaddr, st1);
