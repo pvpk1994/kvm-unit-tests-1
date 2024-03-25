@@ -328,6 +328,10 @@ static void *efi_get_fdt(efi_handle_t handle, struct efi_loaded_image_64 *image)
 		return NULL;
 	}
 
+#ifdef __x86_64__
+	return fdt;
+#endif
+
 	return fdt_check_header(fdt) == 0 ? fdt : NULL;
 }
 
