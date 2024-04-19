@@ -615,6 +615,17 @@ static void test_sev_psc_ghcb_nae(void)
 	       "Write to %d un-encrypted pages after private->shared conversion",
 	       1 << SNP_PSC_ALLOC_ORDER);
 
+	/* Shared->Private operations */
+	report_info("Shared->Private conversion test using GHCB NAE");
+
+	set_pte_encrypted((unsigned long)vm_pages, 1 << SNP_PSC_ALLOC_ORDER);
+
+	sev_set_pages_state((unsigned long)vm_pages, 1 << SNP_PSC_ALLOC_ORDER,
+			    SNP_PAGE_STATE_PRIVATE, ghcb, large_page);
+
+	report(is_validated_private_page((unsigned long)vm_pages, large_page, true),
+	       "Expected page state: Private");
+
 	/* Cleanup */
 	free_pages_by_order(vm_pages, SNP_PSC_ALLOC_ORDER);
 }
