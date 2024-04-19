@@ -22,8 +22,10 @@
 
 #define TESTDEV_IO_PORT 0xe0
 #define SNP_PSC_ALLOC_ORDER 10
+#define INTERMIX_PSC_ORDER 9
 
 static char st1[] = "abcdefghijklmnop";
+static bool allow_noupdate;
 
 static int test_sev_activation(void)
 {
@@ -136,15 +138,22 @@ static void pvalidate_pages(struct snp_psc_desc *desc)
 			for (; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
 				pvalidate_result = pvalidate(vaddr, RMP_PG_SIZE_4K,
 							     validate);
-				if (pvalidate_result)
+				if (!allow_noupdate && pvalidate_result)
+					break;
+				else if (allow_noupdate &&
+					 (pvalidate_result &&
+					  pvalidate_result != PVALIDATE_FAIL_NOUPDATE))
 					break;
 			}
 		}
 
-		if (pvalidate_result) {
+		if (!allow_noupdate && pvalidate_result)
 			assert_msg(!pvalidate_result, "Failed to validate address: 0x%lx, ret: %d\n",
 				   vaddr, pvalidate_result);
-		}
+		else if (allow_noupdate &&
+			 (pvalidate_result && pvalidate_result != PVALIDATE_FAIL_NOUPDATE))
+			assert_msg(!pvalidate_result, "Failed to validate address: 0x%lx, ret: %d\n",
+				   vaddr, pvalidate_result);
 	}
 }
 
@@ -630,6 +639,91 @@ static void test_sev_psc_ghcb_nae(void)
 	free_pages_by_order(vm_pages, SNP_PSC_ALLOC_ORDER);
 }
 
+static void __test_sev_psc_private(unsigned long vaddr, struct ghcb *ghcb,
+				   bool large_page, pteval_t *pte)
+{
+	allow_noupdate = true;
+
+	set_pte_encrypted((unsigned long)vaddr, 1 << INTERMIX_PSC_ORDER);
+
+	/* Convert whole 2M range back to private */
+	sev_set_pages_state(vaddr, 512, SNP_PAGE_STATE_PRIVATE, ghcb,
+			    large_page);
+
+	allow_noupdate = false;
+
+	/* Test re-validation on the now-private 2M page */
+	report(is_validated_private_page(vaddr, large_page, 1),
+	       "Expected 2M page state: Private");
+}
+
+static void test_sev_psc_intermix(bool is_private)
+{
+	unsigned long *vm_page;
+	bool large_page = false;
+	pteval_t *pte;
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	vm_page = alloc_pages(INTERMIX_PSC_ORDER);
+	assert_msg(vm_page, "Page allocation failure");
+
+	pte = get_pte((pgd_t *)read_cr3(), (void *)vm_page);
+	assert_msg(pte, "Invalid PTE");
+
+	if (!pte && IS_ALIGNED((unsigned long)vm_page, LARGE_PAGE_SIZE)) {
+		install_large_page((pgd_t *)read_cr3(), (phys_addr_t)vm_page,
+				   (void *)(ulong)vm_page);
+		large_page = true;
+	}
+
+	pte = get_pte_level((pgd_t *)read_cr3(), (void *)vm_page, 1);
+	if (!pte)
+		report_info("Intermix test will have 2M mapping");
+
+	/* Convert the 2M range into shared */
+	sev_set_pages_state((unsigned long)vm_page, 512,
+			    SNP_PAGE_STATE_SHARED, ghcb,
+			    large_page);
+	set_pte_decrypted((unsigned long)vm_page, 1 << INTERMIX_PSC_ORDER);
+
+	report(!test_write((unsigned long)vm_page, 512),
+	       "Write to a 2M un-encrypted range");
+
+	set_pte_encrypted((unsigned long)vm_page, 1 << INTERMIX_PSC_ORDER);
+
+	/*
+	 * Convert half sub-pages into private and leave other
+	 * half in shared state.
+	 */
+	sev_set_pages_state((unsigned long)vm_page, 256,
+			    SNP_PAGE_STATE_PRIVATE, ghcb, false);
+
+	/* Test re-validation on a now-private 4k page */
+	report(is_validated_private_page((unsigned long)vm_page, false, 1),
+	       "Expected 4K page state: Private");
+
+	/*
+	 * Unset C-bit on 2M PMD before issuing read/write to these
+	 * 256 4K shared entries.
+	 */
+	set_pte_decrypted((unsigned long)vm_page, 1 << INTERMIX_PSC_ORDER);
+
+	report(!test_write((unsigned long)vm_page + 256 * PAGE_SIZE, 256),
+	       "Write to 256 4K shared pages within 2M un-encrypted page");
+
+	if (is_private)
+		__test_sev_psc_private((unsigned long)vm_page, ghcb,
+				       large_page, pte);
+
+	/* Cleanup */
+	free_pages_by_order(vm_page, INTERMIX_PSC_ORDER);
+}
+
+static void test_sev_psc_intermix_to_private(void)
+{
+	test_sev_psc_intermix(true);
+}
+
 int main(void)
 {
 	int rtn;
@@ -643,6 +737,7 @@ int main(void)
 	if (amd_sev_snp_enabled()) {
 		test_sev_psc_ghcb_msr();
 		test_sev_psc_ghcb_nae();
+		test_sev_psc_intermix_to_private();
 	}
 
 	return report_summary();
