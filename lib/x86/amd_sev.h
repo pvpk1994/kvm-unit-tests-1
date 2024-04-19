@@ -71,13 +71,16 @@ struct ghcb {
 	u8 shared_buffer[GHCB_SHARED_BUF_SIZE];
 
 	u8 reserved_0xff0[10];
-	u16 protocol_version;	/* negotiated SEV-ES/GHCB protocol version */
+	u16 version;	/* version of the GHCB data structure */
 	u32 ghcb_usage;
 } __packed;
 
 #define GHCB_PROTO_OUR		0x0001UL
 #define GHCB_PROTOCOL_MAX	1ULL
 #define GHCB_DEFAULT_USAGE	0ULL
+
+/* Version of the GHCB data structure */
+#define GHCB_VERSION		1
 
 #define	VMGEXIT()			{ asm volatile("rep; vmmcall\n\r"); }
 
