@@ -18,6 +18,10 @@ To build:
     ./configure --enable-efi
     make
 
+To make use of UEFI #VC handler for AMD SEV-ES:
+
+    ./configure --enable-efi --amdsev-efi-vc
+
 ### Run test cases with UEFI
 
 To run a test case with UEFI:

@@ -41,6 +41,9 @@ OBJDIRS += $(LIBFDT_objdir)
 # EFI App
 ifeq ($(CONFIG_EFI),y)
 EFI_CFLAGS := -DCONFIG_EFI -DCONFIG_RELOC
+ifeq ($(AMDSEV_EFI_VC),y)
+EFI_CFLAGS += -DAMDSEV_EFI_VC
+endif
 # The following CFLAGS and LDFLAGS come from:
 #   - GNU-EFI/Makefile.defaults
 #   - GNU-EFI/apps/Makefile
