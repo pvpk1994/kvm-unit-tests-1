@@ -34,6 +34,12 @@ the env variable `EFI_UEFI`:
 
     EFI_UEFI=/path/to/OVMF.fd ./x86/efi/run ./x86/msr.efi
 
+### Run SEV-SNP tests with UEFI
+
+To run SEV-SNP related unit tests with UEFI:
+
+    EFI_SNP=y ./x86/efi/run ./x86/amd_sev.efi
+
 ## Code structure
 
 ### Code from GNU-EFI
