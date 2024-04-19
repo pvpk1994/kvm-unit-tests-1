@@ -89,12 +89,16 @@ bool amd_sev_es_enabled(void)
 	return sev_es_enabled;
 }
 
-efi_status_t setup_amd_sev_es(void)
+efi_status_t setup_vc_handler(void)
 {
 	struct descriptor_table_ptr idtr;
 	idt_entry_t *idt;
 	idt_entry_t vc_handler_idt;
 
+	/*
+	 * If AMD SEV-SNP is enabled, then SEV-ES is also enabled, so
+	 * checking for SEV-ES covers both.
+	 */
 	if (!amd_sev_es_enabled()) {
 		return EFI_UNSUPPORTED;
 	}
