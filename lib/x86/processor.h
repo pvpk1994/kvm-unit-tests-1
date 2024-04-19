@@ -477,16 +477,6 @@ static inline uint64_t rdpmc(uint32_t index)
 	return val;
 }
 
-static inline int xgetbv_safe(u32 index, u64 *result)
-{
-	return rdreg64_safe(".byte 0x0f,0x01,0xd0", index, result);
-}
-
-static inline int xsetbv_safe(u32 index, u64 value)
-{
-	return wrreg64_safe(".byte 0x0f,0x01,0xd1", index, value);
-}
-
 static inline int write_cr0_safe(ulong val)
 {
 	return asm_safe("mov %0,%%cr0", "r" (val));
