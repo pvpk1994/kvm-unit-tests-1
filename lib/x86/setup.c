@@ -331,9 +331,9 @@ efi_status_t setup_efi(efi_bootinfo_t *efi_bootinfo)
 	phase = "AMD SEV";
 	status = setup_amd_sev();
 
-	/* Continue if AMD SEV is not supported, but skip SEV-ES setup */
-	if (status == EFI_SUCCESS) {
-		phase = "AMD SEV-ES";
+	/* Continue if AMD SEV is not supported, but skip SEV-ES or SEV-SNP setup */
+	if (status == EFI_SUCCESS && amd_sev_es_enabled()) {
+		phase = amd_sev_snp_enabled() ? "AMD SEV-SNP" : "AMD SEV-ES";
 		status = setup_vc_handler();
 	}
 
