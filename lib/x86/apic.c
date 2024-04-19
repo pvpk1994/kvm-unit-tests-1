@@ -4,6 +4,7 @@
 #include "processor.h"
 #include "smp.h"
 #include "asm/barrier.h"
+#include "asm/io.h"
 
 /* xAPIC and I/O APIC are identify mapped, and never relocated. */
 static void *g_apic = (void *)APIC_DEFAULT_PHYS_BASE;
@@ -21,11 +22,6 @@ struct apic_ops {
 static struct apic_ops *get_apic_ops(void)
 {
 	return this_cpu_read_apic_ops();
-}
-
-static void outb(unsigned char data, unsigned short port)
-{
-	asm volatile ("out %0, %1" : : "a"(data), "d"(port));
 }
 
 void eoi(void)
@@ -232,7 +228,7 @@ void set_mask(unsigned line, int mask)
 
 void set_irq_line(unsigned line, int val)
 {
-	asm volatile("out %0, %1" : : "a"((u8)val), "d"((u16)(0x2000 + line)));
+	outb((u8)val, (u16)(0x2000 + line));
 }
 
 void enable_apic(void)
