@@ -89,6 +89,22 @@ bool amd_sev_es_enabled(void)
 	return sev_es_enabled;
 }
 
+bool amd_sev_snp_enabled(void)
+{
+	static bool sev_snp_enabled;
+	static bool initialized;
+
+	/* Test if SEV-SNP is enabled */
+	if (!initialized) {
+		if (amd_sev_es_enabled())
+			sev_snp_enabled = rdmsr(MSR_SEV_STATUS) &
+					  SEV_SNP_ENABLED_MASK;
+		initialized = true;
+	}
+
+	return sev_snp_enabled;
+}
+
 efi_status_t setup_vc_handler(void)
 {
 	struct descriptor_table_ptr idtr;
