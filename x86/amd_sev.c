@@ -206,8 +206,28 @@ static void set_pte_decrypted(unsigned long vaddr, int npages)
 	flush_tlb();
 }
 
-static efi_status_t sev_set_pages_state_msr_proto(unsigned long vaddr, int npages,
-						  int operation)
+static void set_pte_encrypted(unsigned long vaddr, int npages)
+{
+	pteval_t *pte;
+	unsigned long vaddr_end = vaddr + (npages * PAGE_SIZE);
+
+	while (vaddr < vaddr_end) {
+		pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+		if (!pte)
+			assert_msg(pte, "No pte found for vaddr 0x%lx", vaddr);
+
+		/* Set C-bit */
+		*pte |= get_amd_sev_c_bit_mask();
+
+		vaddr += PAGE_SIZE;
+	}
+
+	flush_tlb();
+}
+
+static efi_status_t sev_set_pages_state_msr_proto(unsigned long vaddr,
+						  int npages, int operation)
 {
 	efi_status_t status;
 
@@ -226,6 +246,16 @@ static efi_status_t sev_set_pages_state_msr_proto(unsigned long vaddr, int npage
 		}
 
 		set_pte_decrypted(vaddr, npages);
+
+	} else {
+		set_pte_encrypted(vaddr, npages);
+
+		status = __sev_set_pages_state_msr_proto(vaddr, npages,
+							 operation);
+		if (status != ES_OK) {
+			printf("Page state change (Shared->Private failure.\n");
+			return status;
+		}
 	}
 
 	return ES_OK;
@@ -357,6 +387,21 @@ static void test_sev_psc_ghcb_msr(void)
 		       "Write to %d unencrypted pages after private->shared conversion",
 		       1 << SNP_PSC_ALLOC_ORDER);
 	}
+
+	report_info("Shared->Private conversion test using GHCB MSR");
+	status = sev_set_pages_state_msr_proto((unsigned long)vaddr,
+					       1 << SNP_PSC_ALLOC_ORDER,
+					       SNP_PAGE_STATE_PRIVATE);
+
+	report(status == ES_OK, "Shared->Private Page State Change");
+
+	/*
+	 * After performing shared->private test, ensure the page is in
+	 * private state by issuing a pvalidate on a 4K page.
+	 */
+	report(is_validated_private_page((unsigned long)vaddr,
+					 RMP_PG_SIZE_4K, true),
+	       "Expected page state: Private");
 
 	/* Cleanup */
 	free_pages_by_order(vaddr, SNP_PSC_ALLOC_ORDER);
