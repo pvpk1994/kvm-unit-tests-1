@@ -69,14 +69,44 @@ static void test_sev_es_activation(void)
 	}
 }
 
+/* Check to find if SEV-SNP's Confidential Computing Blob is present */
+static efi_status_t find_cc_blob_efi(void)
+{
+	struct cc_blob_sev_info *snp_cc_blob;
+	efi_status_t status;
+
+	status = efi_get_system_config_table(EFI_CC_BLOB_GUID,
+					     (void **)&snp_cc_blob);
+
+	if (status != EFI_SUCCESS)
+		return status;
+
+	if (!snp_cc_blob) {
+		printf("SEV-SNP CC blob not found\n");
+		return EFI_NOT_FOUND;
+	}
+
+	if (snp_cc_blob->magic != CC_BLOB_SEV_HDR_MAGIC) {
+		printf("SEV-SNP CC blob header/signature mismatch");
+		return EFI_UNSUPPORTED;
+	}
+
+	return EFI_SUCCESS;
+}
+
 static void test_sev_snp_activation(void)
 {
+	efi_status_t status;
+
 	if (!(rdmsr(MSR_SEV_STATUS) & SEV_SNP_ENABLED_MASK)) {
 		report_skip("SEV-SNP is not enabled");
 		return;
 	}
 
 	report_info("SEV-SNP is enabled");
+
+	status = find_cc_blob_efi();
+	report(status == EFI_SUCCESS, "SEV-SNP CC-blob presence");
 }
 
 static void test_stringio(void)
