@@ -15,9 +15,11 @@ source config.mak
 
 : "${EFI_SRC:=$TEST_DIR}"
 : "${EFI_UEFI:=/usr/share/ovmf/OVMF.fd}"
+: "${EFI_VARS:=/usr/share/ovmf/OVMF_VARS.fd}"
 : "${EFI_TEST:=efi-tests}"
 : "${EFI_SMP:=1}"
 : "${EFI_CASE:=$(basename $1 .efi)}"
+: "${EFI_SNP:=n}"
 
 if [ ! -f "$EFI_UEFI" ]; then
 	echo "UEFI firmware not found: $EFI_UEFI"
@@ -43,6 +45,24 @@ fi
 mkdir -p "$EFI_CASE_DIR"
 cp "$EFI_SRC/$EFI_CASE.efi" "$EFI_CASE_BINARY"
 
+# SEV-SNP no longer supports using pflash unit=0 for loading the bios,
+# and instead relies on -bios parameter. pflash unit=0 will instead only
+# be used for OVMF_VARS image, if present.
+if [ "$EFI_SNP" == "y" ]; then
+	"$TEST_DIR/run" \
+	-bios "${EFI_UEFI}" \
+	-drive file="$EFI_VARS",format=raw,if=pflash,unit=0 \
+	-drive file.dir="$EFI_TEST/$EFI_CASE/",file.driver=vvfat,file.rw=on,format=raw,if=virtio \
+	-net none \
+	-nographic \
+	-m 512M \
+	-object memory-backend-memfd,id=ram1,size=512M,share=true,prealloc=false \
+	-machine q35,confidential-guest-support=sev0,memory-backend=ram1 \
+	-object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1 \
+	-cpu EPYC-v4
+
+	exit $?
+else
 # Run test case with 256MiB QEMU memory. QEMU default memory size is 128MiB.
 # After UEFI boot up and we call `LibMemoryMap()`, the largest consecutive
 # memory region is ~42MiB. Although this is sufficient for many test cases to
@@ -54,11 +74,12 @@ cp "$EFI_SRC/$EFI_CASE.efi" "$EFI_CASE_BINARY"
 # to x86/run. This `smp` flag overrides any previous `smp` flags (e.g.,
 # `-smp 4`). This is necessary because KVM-Unit-Tests do not currently support
 # SMP under UEFI. This last flag should be removed when this issue is resolved.
-"$TEST_DIR/run" \
-	-drive file="$EFI_UEFI",format=raw,if=pflash,readonly=on \
-	-drive file.dir="$EFI_TEST/$EFI_CASE/",file.driver=vvfat,file.rw=on,format=raw,if=virtio \
-	-net none \
-	-nographic \
-	-m 256 \
-	"$@" \
-	-smp "$EFI_SMP"
+	"$TEST_DIR/run" \
+		-drive file="$EFI_UEFI",format=raw,if=pflash,readonly=on \
+		-drive file.dir="$EFI_TEST/$EFI_CASE/",file.driver=vvfat,file.rw=on,format=raw,if=virtio \
+		-net none \
+		-nographic \
+		-m 256 \
+		"$@" \
+		-smp "$EFI_SMP"
+fi
