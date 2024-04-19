@@ -5,6 +5,8 @@
 #include "smp.h"
 #include "asm/barrier.h"
 #include "asm/io.h"
+#include "amd_sev.h"
+#include "x86/vm.h"
 
 /* xAPIC and I/O APIC are identify mapped, and never relocated. */
 static void *g_apic = (void *)APIC_DEFAULT_PHYS_BASE;
@@ -233,7 +235,17 @@ void set_irq_line(unsigned line, int val)
 
 void enable_apic(void)
 {
+	pteval_t *pte;
+
 	printf("enabling apic\n");
+
+	if (amd_sev_es_enabled()) {
+		pte = get_pte((pgd_t *)read_cr3(),
+			      (void *)APIC_DEFAULT_PHYS_BASE);
+
+		*pte &= ~get_amd_sev_c_bit_mask();
+	}
+
 	xapic_write(APIC_SPIV, 0x1ff);
 }
 
