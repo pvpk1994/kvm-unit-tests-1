@@ -55,6 +55,7 @@ static inline void *current_page_table(void)
 
 void split_large_page(unsigned long *ptep, int level);
 void force_4k_page(void *addr);
+unsigned long va_to_pa(unsigned long vaddr);
 
 struct vm_vcpu_info {
         u64 cr3;

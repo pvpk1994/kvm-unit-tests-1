@@ -332,3 +332,42 @@ void walk_pte(void *virt, size_t len, pte_callback_t callback)
         callback(search, (void *)curr);
     }
 }
+
+unsigned long va_to_pa(unsigned long va)
+{
+	int level;
+	pteval_t *pt = (pgd_t *)read_cr3();
+	unsigned offset;
+	unsigned long paddr;
+
+	for (level = PAGE_LEVEL; level > 1; --level) {
+		offset = PGDIR_OFFSET((uintptr_t)va, level);
+		assert_msg(pt[offset], "PTE absent");
+
+		if (level == 2 && (pt[offset] & PT_PAGE_SIZE_MASK)) {
+			paddr = (pt[offset] | (va & ~LARGE_PAGE_MASK));
+			paddr &= ~(PT_PRESENT_MASK | PT_WRITABLE_MASK |
+				   pte_opt_mask | PT_PAGE_SIZE_MASK |
+				   PT_AD_MASK);
+
+#ifdef CONFIG_EFI
+			paddr &= ~get_amd_sev_c_bit_mask();
+#endif
+			return paddr;
+		}
+
+		pt = phys_to_virt(pt[offset] & PT_ADDR_MASK);
+	}
+	offset = PGDIR_OFFSET((uintptr_t)va, level);
+	assert_msg(pt[offset], "PTE absent");
+
+	paddr = (pt[offset] | (va & ~PAGE_MASK));
+	paddr &= ~(PT_PRESENT_MASK | PT_WRITABLE_MASK | pte_opt_mask |
+		   PT_AD_MASK);
+
+#ifdef CONFIG_EFI
+	paddr &= ~get_amd_sev_c_bit_mask();
+#endif
+
+	return paddr;
+}
