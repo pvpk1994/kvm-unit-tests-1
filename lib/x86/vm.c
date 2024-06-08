@@ -332,3 +332,27 @@ void walk_pte(void *virt, size_t len, pte_callback_t callback)
         callback(search, (void *)curr);
     }
 }
+
+unsigned long pgtable_va_to_pa(unsigned long va)
+{
+	pteval_t *pt = (pgd_t *)read_cr3();
+	unsigned long offset, paddr;
+	int level;
+
+	for (level = PAGE_LEVEL; level; level--) {
+		offset = PGDIR_OFFSET((uintptr_t)va, level);
+		assert_msg(pt[offset], "PTE absent");
+
+		if (level == 1 ||
+		    (level <= 3 && (pt[offset] & PT_PAGE_SIZE_MASK))) {
+			paddr = pt[offset] & PT_ADDR_MASK;
+			paddr += va & ((1UL << PGDIR_BITS(level)) - 1);
+
+			return paddr;
+		}
+
+		pt = phys_to_virt(pt[offset] & PT_ADDR_MASK);
+	}
+
+	__builtin_unreachable();
+}
