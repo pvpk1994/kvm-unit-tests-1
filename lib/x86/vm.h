@@ -7,6 +7,9 @@
 #include "asm/io.h"
 #include "asm/bitops.h"
 
+#define ORDER_4K	0
+#define ORDER_2M	9
+
 void setup_5level_page_table(void);
 
 struct pte_search {

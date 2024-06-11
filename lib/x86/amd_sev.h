@@ -84,6 +84,16 @@ struct ghcb {
 
 #define	VMGEXIT()			{ asm volatile("rep; vmmcall\n\r"); }
 
+/* PVALIDATE return codes */
+#define PVALIDATE_FAIL_SIZEMISMATCH	6
+
+/* Software defined (when rFlags.CF = 1) */
+#define PVALIDATE_FAIL_NOUPDATE		255
+
+/* RMP page size */
+#define RMP_PG_SIZE_4K		0
+#define RMP_PG_SIZE_2M		1
+
 enum es_result {
 	ES_OK,			/* All good */
 	ES_UNSUPPORTED,		/* Requested operation not supported */
@@ -105,6 +115,13 @@ struct es_em_ctxt {
 	struct insn insn;
 	struct es_fault_info fi;
 };
+
+/*
+ * Assign a large enough order to run SEV-SNP based tests for 4K as well
+ * as 2M ranges
+ */
+#define SEV_ALLOC_ORDER		10
+#define SEV_ALLOC_PAGE_COUNT	1 << SEV_ALLOC_ORDER
 
 /*
  * AMD SEV Confidential computing blob structure. The structure is
@@ -157,14 +174,66 @@ efi_status_t setup_amd_sev(void);
  */
 #define SEV_ES_GHCB_MSR_INDEX 0xc0010130
 
+#define GHCB_DATA_LOW		12
+#define GHCB_MSR_INFO_MASK	(BIT_ULL(GHCB_DATA_LOW) - 1)
+#define GHCB_RESP_CODE(v)	((v) & GHCB_MSR_INFO_MASK)
+
+/*
+ * SNP Page State Change Operation
+ *
+ * GHCBData[55:52] - Page operation:
+ *	0x0001	Page assignment, Private
+ *	0x0002	Page assignment, Shared
+ *	0x0003	PSMASH
+ *	0x0004	UNSMASH
+ */
+enum psc_op {
+	SNP_PAGE_STATE_PRIVATE = 1,
+	SNP_PAGE_STATE_SHARED,
+	SNP_PAGE_STATE_PSMASH,
+	SNP_PAGE_STATE_UNSMASH,
+};
+
+#define GHCB_MSR_PSC_REQ	0x14
+#define GHCB_MSR_PSC_REQ_GFN(gfn, op)				\
+	/* GHCBData[55:52] */					\
+	(((u64)((op) & 0xf) << 52) |				\
+	/* GHCBData[51:12] */					\
+	((u64)((gfn) & GENMASK_ULL(39, 0)) << 12) |		\
+	/* GHCBData[11:0] */					\
+	GHCB_MSR_PSC_REQ)
+
+#define GHCB_MSR_PSC_RESP	0x15
+#define GHCB_MSR_PSC_RESP_VAL(val)				\
+	/* GHCBData[63:32] */					\
+	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
+
 bool amd_sev_es_enabled(void);
 efi_status_t setup_vc_handler(void);
 bool amd_sev_snp_enabled(void);
 void setup_ghcb_pte(pgd_t *page_table);
 void handle_sev_es_vc(struct ex_regs *regs);
+int pvalidate(unsigned long vaddr, bool rmp_size, bool validate);
+void set_pte_decrypted(unsigned long vaddr, int npages);
+void set_pte_encrypted(unsigned long vaddr, int npages);
+bool is_validated_private_page(unsigned long vaddr, bool rmp_size);
+enum es_result  __sev_set_pages_state_msr_proto(unsigned long vaddr,
+					        int npages, int operation);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);
+
+/*
+ * Macros to generate condition code outputs from inline assembly,
+ * The output operand must be type "bool".
+ */
+#ifdef __GCC_ASM_FLAG_OUTPUTS__
+# define CC_SET(c) "\n\t/* output condition code " #c "*/\n"
+# define CC_OUT(c) "=@cc" #c
+#else
+# define CC_SET(c) "\n\tset" #c " %[_cc_" #c "]\n"
+# define CC_OUT(c)[_cc_ ## c] "=qm"
+#endif
 
 /* GHCB Accessor functions from Linux's include/asm/svm.h */
 #define GHCB_BITMAP_IDX(field)							\

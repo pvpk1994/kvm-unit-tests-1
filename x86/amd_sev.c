@@ -14,6 +14,9 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "vmalloc.h"
+#include "x86/vm.h"
+#include "alloc_page.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -128,6 +131,85 @@ static void test_stringio(void)
 	report((got & 0xff00) >> 8 == st1[sizeof(st1) - 2], "outsb up");
 }
 
+static enum es_result sev_set_pages_state_msr_proto(unsigned long vaddr,
+						    int npages, int operation)
+{
+	efi_status_t status;
+
+	vaddr &= PAGE_MASK;
+
+	if (operation == SNP_PAGE_STATE_SHARED) {
+		status = __sev_set_pages_state_msr_proto(vaddr, npages, operation);
+
+		if (status != ES_OK) {
+			printf("Page state change (private->shared) failure");
+			return status;
+		}
+
+		set_pte_decrypted(vaddr, npages);
+	} else {
+		set_pte_encrypted(vaddr, npages);
+
+		status = __sev_set_pages_state_msr_proto(vaddr, npages, operation);
+
+		if (status != ES_OK) {
+			printf("Page state change (shared->private) failure.\n");
+			return status;
+		}
+	}
+
+	return ES_OK;
+}
+
+static int test_write(unsigned long vaddr, int npages)
+{
+	unsigned long vaddr_end = vaddr + (npages << PAGE_SHIFT);
+
+	while (vaddr < vaddr_end) {
+		memcpy((void *)vaddr, st1, strnlen(st1, PAGE_SIZE));
+		vaddr += PAGE_SIZE;
+	}
+
+	return 0;
+}
+
+static void test_sev_psc_ghcb_msr(void)
+{
+	void *vaddr;
+	efi_status_t status;
+
+	report_info("TEST: GHCB MSR based Page state change test");
+
+	vaddr = alloc_pages(SEV_ALLOC_ORDER);
+	force_4k_page(vaddr);
+
+	report(is_validated_private_page((unsigned long)vaddr, RMP_PG_SIZE_4K),
+	       "Expected page state: Private");
+
+	status = sev_set_pages_state_msr_proto((unsigned long)vaddr,
+					       SEV_ALLOC_PAGE_COUNT,
+					       SNP_PAGE_STATE_SHARED);
+
+	report(status == ES_OK, "Private->Shared Page state change for %d pages",
+	       SEV_ALLOC_PAGE_COUNT);
+
+	/*
+	 * Access the now-shared page(s) with C-bit cleared and ensure
+	 * writes to these pages are successful
+	 */
+	report(!test_write((unsigned long)vaddr, SEV_ALLOC_PAGE_COUNT),
+	       "Write to %d unencrypted 4K pages after private->shared conversion",
+	       (SEV_ALLOC_PAGE_COUNT) / (1 << ORDER_4K));
+
+	/* convert the pages back to private after PSC */
+	status = sev_set_pages_state_msr_proto((unsigned long)vaddr,
+					       SEV_ALLOC_PAGE_COUNT,
+					       SNP_PAGE_STATE_PRIVATE);
+
+	/* Free up all the pages */
+	free_pages_by_order(vaddr, SEV_ALLOC_ORDER);
+}
+
 int main(void)
 {
 	int rtn;
@@ -136,5 +218,11 @@ int main(void)
 	test_sev_es_activation();
 	test_sev_snp_activation();
 	test_stringio();
+
+	/* Setup a new page table via setup_vm() */
+	setup_vm();
+	if (amd_sev_snp_enabled())
+		test_sev_psc_ghcb_msr();
+
 	return report_summary();
 }

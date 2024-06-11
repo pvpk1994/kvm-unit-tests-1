@@ -12,6 +12,8 @@
 #include "amd_sev.h"
 #include "x86/processor.h"
 #include "x86/vm.h"
+#include "vmalloc.h"
+#include "alloc_page.h"
 
 static unsigned short amd_sev_c_bit_pos;
 phys_addr_t ghcb_addr;
@@ -187,4 +189,160 @@ unsigned long long get_amd_sev_addr_upperbound(void)
 		/* Default memory upper bound */
 		return PT_ADDR_UPPER_BOUND_DEFAULT;
 	}
+}
+
+void set_pte_decrypted(unsigned long vaddr, int npages)
+{
+	pteval_t *pte;
+	unsigned long vaddr_end = vaddr + (npages * PAGE_SIZE);
+
+	while (vaddr < vaddr_end) {
+		pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+		if (!pte)
+			assert_msg(pte, "No pte found for vaddr 0x%lx", vaddr);
+
+		/* unset C-bit */
+		*pte &= ~get_amd_sev_c_bit_mask();
+
+		vaddr += PAGE_SIZE;
+	}
+
+	flush_tlb();
+}
+
+void set_pte_encrypted(unsigned long vaddr, int npages)
+{
+	pteval_t *pte;
+	unsigned long vaddr_end = vaddr + (npages * PAGE_SIZE);
+
+	while (vaddr < vaddr_end) {
+		pte = get_pte((pgd_t *)read_cr3(), (void *)vaddr);
+
+		if (!pte)
+			assert_msg(pte, "No pte found for vaddr 0x%lx", vaddr);
+
+		/* set C-bit */
+		*pte |= get_amd_sev_c_bit_mask();
+
+		vaddr += PAGE_SIZE;
+	}
+
+	flush_tlb();
+}
+
+int pvalidate(unsigned long vaddr, bool rmp_size, bool validate)
+{
+	bool rmp_unchanged;
+	int result;
+
+	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
+		     CC_SET(c)
+		     : CC_OUT(c) (rmp_unchanged), "=a" (result)
+		     : "a" (vaddr), "c" (rmp_size), "d" (validate)
+		     : "memory", "cc");
+
+	if (rmp_unchanged)
+		return PVALIDATE_FAIL_NOUPDATE;
+
+	return result;
+}
+
+bool is_validated_private_page(unsigned long vaddr, bool rmp_size)
+{
+	int ret;
+
+	/* Attempt a PVALIDATE here for the provided page size */
+	ret = pvalidate(vaddr, rmp_size, true);
+	if (ret == PVALIDATE_FAIL_NOUPDATE)
+		return true;
+
+	/*
+	 * If PVALIDATE_FAIL_SIZEMISMATCH, entry in the RMP is 4K and
+	 * what guest is providing is a 2M entry. Therefore, fallback
+	 * to pvalidating 4K entries within 2M range.
+	 */
+	if (rmp_size && ret == PVALIDATE_FAIL_SIZEMISMATCH) {
+		unsigned long vaddr_end = vaddr + LARGE_PAGE_SIZE;
+
+		for (; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
+			ret = pvalidate(vaddr, RMP_PG_SIZE_4K, true);
+			if (ret != PVALIDATE_FAIL_NOUPDATE)
+				return false;
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+enum es_result __sev_set_pages_state_msr_proto(unsigned long vaddr, int npages,
+					       int operation)
+{
+	unsigned long vaddr_end = vaddr + (npages * PAGE_SIZE);
+	unsigned long paddr;
+	int ret;
+	unsigned long val;
+
+	/*
+	 * GHCB maybe established at this point, so save and restore the
+	 * current value which will be overwritten by the MSR protocol
+	 * request.
+	 */
+	phys_addr_t ghcb_old_msr = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	while (vaddr < vaddr_end) {
+		paddr = __pa(vaddr);
+
+		if (operation == SNP_PAGE_STATE_SHARED) {
+			ret = pvalidate(vaddr, RMP_PG_SIZE_4K, false);
+			if (ret) {
+				printf("Failed to invalidate vaddr: 0x%lx, ret: %d\n",
+				       vaddr, ret);
+				wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+				return ES_UNSUPPORTED;
+			}
+		}
+
+		wrmsr(SEV_ES_GHCB_MSR_INDEX,
+		      GHCB_MSR_PSC_REQ_GFN(paddr >> PAGE_SHIFT, operation));
+
+		VMGEXIT();
+
+		val = rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+		if (GHCB_RESP_CODE(val) != GHCB_MSR_PSC_RESP) {
+			printf("Incorrect PSC response code: 0x%x\n",
+			       (unsigned int)GHCB_RESP_CODE(val));
+			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+			return ES_VMM_ERROR;
+		}
+
+		if (GHCB_MSR_PSC_RESP_VAL(val)) {
+			printf("Failed to change page state to %s paddr: 0x%lx error: 0x%llx\n",
+			       operation == SNP_PAGE_STATE_PRIVATE ? "private" :
+								     "shared",
+			       paddr, GHCB_MSR_PSC_RESP_VAL(val));
+			wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+			return ES_VMM_ERROR;
+		}
+
+		if (operation == SNP_PAGE_STATE_PRIVATE) {
+			ret = pvalidate(vaddr, RMP_PG_SIZE_4K, true);
+			if (ret) {
+				printf("Failed to validate vaddr: 0x%lx, ret: %d\n",
+				       vaddr, ret);
+				wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+				return ES_UNSUPPORTED;
+			}
+		}
+
+		vaddr += PAGE_SIZE;
+	}
+
+	/* Restore old GHCB msr - setup by OVMF */
+	wrmsr(SEV_ES_GHCB_MSR_INDEX, ghcb_old_msr);
+
+	return ES_OK;
 }
