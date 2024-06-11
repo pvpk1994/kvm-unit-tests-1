@@ -14,6 +14,9 @@
 #include "x86/processor.h"
 #include "x86/amd_sev.h"
 #include "msr.h"
+#include "vmalloc.h"
+#include "x86/vm.h"
+#include "alloc_page.h"
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
@@ -128,6 +131,64 @@ static void test_stringio(void)
 	report((got & 0xff00) >> 8 == st1[sizeof(st1) - 2], "outsb up");
 }
 
+static efi_status_t sev_set_pages_state_msr_proto(unsigned long vaddr, int npages,
+						  int operation)
+{
+	efi_status_t status;
+
+	vaddr &= PAGE_MASK;
+
+	if (operation == SNP_PAGE_STATE_SHARED) {
+		status = __sev_set_pages_state_msr_proto(vaddr, npages, operation);
+
+		if (status != ES_OK) {
+			printf("Page state change (private->shared) failure");
+			return status;
+		}
+
+		set_pte_decrypted(vaddr, npages);
+	} else {
+		set_pte_encrypted(vaddr, npages);
+
+		status = __sev_set_pages_state_msr_proto(vaddr, npages, operation);
+
+		if (status != ES_OK) {
+			printf("Page state change (shared->private) failure.\n");
+			return status;
+		}
+	}
+
+	return ES_OK;
+}
+
+static void test_sev_psc_ghcb_msr(void)
+{
+	report_info("TEST: GHCB MSR based Page state change test");
+
+	void *vaddr;
+	efi_status_t status;
+
+	vaddr = alloc_pages(SEV_ALLOC_ORDER);
+	force_4k_page(vaddr);
+
+	report(is_validated_private_page((unsigned long)vaddr, RMP_PG_SIZE_4K, true),
+	       "Expected page state: Private");
+
+	status = sev_set_pages_state_msr_proto((unsigned long)vaddr, NUM_SEV_PAGES,
+					       SNP_PAGE_STATE_SHARED);
+
+	report(status == ES_OK, "Private->Shared Page state change for %d pages",
+	       NUM_SEV_PAGES);
+
+	/* Convert the pages back to private after PSC */
+	status = sev_set_pages_state_msr_proto((unsigned long)vaddr,
+					       NUM_SEV_PAGES,
+					       SNP_PAGE_STATE_PRIVATE);
+
+	/* Free up all the pages */
+	free_pages_by_order(vaddr, SEV_ALLOC_ORDER);
+}
+
 int main(void)
 {
 	int rtn;
@@ -136,5 +197,9 @@ int main(void)
 	test_sev_es_activation();
 	test_sev_snp_activation();
 	test_stringio();
+	setup_vm();
+	if (amd_sev_snp_enabled())
+		test_sev_psc_ghcb_msr();
+
 	return report_summary();
 }
