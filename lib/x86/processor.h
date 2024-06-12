@@ -493,6 +493,14 @@ static inline uint64_t rdpmc(uint32_t index)
 	return val;
 }
 
+/* XCR0 related definitions */
+#define XCR_XFEATURE_ENABLED_MASK       0x00000000
+#define XCR_XFEATURE_ILLEGAL_MASK       0x00000010
+
+#define XSTATE_FP       0x1
+#define XSTATE_SSE      0x2
+#define XSTATE_YMM      0x4
+
 static inline int xgetbv_safe(u32 index, u64 *result)
 {
 	return rdreg64_safe(".byte 0x0f,0x01,0xd0", index, result);
