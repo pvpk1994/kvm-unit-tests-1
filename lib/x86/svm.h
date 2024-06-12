@@ -151,6 +151,25 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 #define SVM_IOIO_SIZE_MASK (7 << SVM_IOIO_SIZE_SHIFT)
 #define SVM_IOIO_ASIZE_MASK (7 << SVM_IOIO_ASIZE_SHIFT)
 
+#define SVM_IOIO_TYPE_STR  BIT(2)
+#define SVM_IOIO_TYPE_IN   1
+#define SVM_IOIO_TYPE_INS  (SVM_IOIO_TYPE_IN | SVM_IOIO_TYPE_STR)
+#define SVM_IOIO_TYPE_OUT  0
+#define SVM_IOIO_TYPE_OUTS (SVM_IOIO_TYPE_OUT | SVM_IOIO_TYPE_STR)
+
+#define SVM_IOIO_REP       BIT(3)
+
+#define SVM_IOIO_ADDR_64   BIT(9)
+#define SVM_IOIO_ADDR_32   BIT(8)
+#define SVM_IOIO_ADDR_16   BIT(7)
+
+#define SVM_IOIO_DATA_32   BIT(6)
+#define SVM_IOIO_DATA_16   BIT(5)
+#define SVM_IOIO_DATA_8    BIT(4)
+
+#define SVM_IOIO_SEG_ES    (0 << 10)
+#define SVM_IOIO_SEG_DS    (3 << 10)
+
 #define SVM_VM_CR_VALID_MASK	0x001fULL
 #define SVM_VM_CR_SVM_LOCK_MASK 0x0008ULL
 #define SVM_VM_CR_SVM_DIS_MASK  0x0010ULL
