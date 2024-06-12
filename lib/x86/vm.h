@@ -41,6 +41,7 @@ pteval_t *install_pte(pgd_t *cr3,
 
 pteval_t *install_large_page(pgd_t *cr3, phys_addr_t phys, void *virt);
 void install_pages(pgd_t *cr3, phys_addr_t phys, size_t len, void *virt);
+void install_large_pages(pgd_t *cr3, phys_addr_t phys, size_t len, void *virt);
 bool any_present_pages(pgd_t *cr3, void *virt, size_t len);
 void set_pte_opt_mask(void);
 void reset_pte_opt_mask(void);
