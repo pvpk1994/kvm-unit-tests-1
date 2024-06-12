@@ -140,16 +140,7 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 
 #define SVM_INTERRUPT_SHADOW_MASK 1
 
-#define SVM_IOIO_STR_SHIFT 2
-#define SVM_IOIO_REP_SHIFT 3
 #define SVM_IOIO_SIZE_SHIFT 4
-#define SVM_IOIO_ASIZE_SHIFT 7
-
-#define SVM_IOIO_TYPE_MASK 1
-#define SVM_IOIO_STR_MASK (1 << SVM_IOIO_STR_SHIFT)
-#define SVM_IOIO_REP_MASK (1 << SVM_IOIO_REP_SHIFT)
-#define SVM_IOIO_SIZE_MASK (7 << SVM_IOIO_SIZE_SHIFT)
-#define SVM_IOIO_ASIZE_MASK (7 << SVM_IOIO_ASIZE_SHIFT)
 
 #define SVM_IOIO_TYPE_STR  BIT(2)
 #define SVM_IOIO_TYPE_IN   1
