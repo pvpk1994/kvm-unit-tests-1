@@ -128,6 +128,20 @@ void install_pages(pgd_t *cr3, phys_addr_t phys, size_t len, void *virt)
 	}
 }
 
+void install_large_pages(pgd_t *cr3, phys_addr_t phys, size_t len, void *virt)
+{
+	phys_addr_t max = (u64)len + (u64)phys;
+	assert(phys % LARGE_PAGE_SIZE == 0);
+	assert((uintptr_t)virt % LARGE_PAGE_SIZE == 0);
+	assert(len % LARGE_PAGE_SIZE == 0);
+
+	while (phys + LARGE_PAGE_SIZE <= max) {
+		install_large_page(cr3, phys, virt);
+		phys += LARGE_PAGE_SIZE;
+		virt = (char *)virt + LARGE_PAGE_SIZE;
+	}
+}
+
 bool any_present_pages(pgd_t *cr3, void *virt, size_t len)
 {
 	uintptr_t max = (uintptr_t) virt + len;
