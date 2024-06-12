@@ -2,7 +2,7 @@
  * Framework for testing nested virtualization
  */
 
-#include "svm.h"
+#include "svm_tests.h"
 #include "libcflat.h"
 #include "processor.h"
 #include "desc.h"

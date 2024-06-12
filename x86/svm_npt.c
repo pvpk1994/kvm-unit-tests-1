@@ -1,4 +1,4 @@
-#include "svm.h"
+#include "svm_tests.h"
 #include "vm.h"
 #include "alloc_page.h"
 #include "vmalloc.h"
