@@ -24,6 +24,7 @@
 #define TESTDEV_IO_PORT 0xe0
 
 static char st1[] = "abcdefghijklmnop";
+bool large_entry;
 
 static int test_sev_activation(void)
 {
@@ -161,6 +162,36 @@ static efi_status_t sev_set_pages_state_msr_proto(unsigned long vaddr, int npage
 	return ES_OK;
 }
 
+static void sev_set_pages_state(unsigned long vaddr, int npages, int op,
+				struct ghcb *ghcb)
+{
+	struct snp_psc_desc desc;
+	unsigned long vaddr_end;
+
+	vaddr &= PAGE_MASK;
+	vaddr_end = vaddr + (npages << PAGE_SHIFT);
+
+	if (IS_ALIGNED(vaddr, LARGE_PAGE_SIZE))
+		large_entry = true;
+
+	while (vaddr < vaddr_end)
+		vaddr = __sev_set_pages_state(&desc, vaddr, vaddr_end,
+					      op, ghcb);
+}
+
+static void snp_free_pages(int order, int npages, unsigned long vaddr,
+			   struct ghcb *ghcb)
+{
+	set_pte_encrypted(vaddr, NUM_SEV_PAGES);
+
+	/* Convert pages back to default guest-owned state */
+	sev_set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE,
+			    ghcb);
+
+	/* Free all the associated physical pages */
+	free_pages_by_order((void *)va_to_pa(vaddr), order);
+}
+
 static void test_sev_psc_ghcb_msr(void)
 {
 	report_info("TEST: GHCB MSR based Page state change test");
@@ -189,6 +220,42 @@ static void test_sev_psc_ghcb_msr(void)
 	free_pages_by_order(vaddr, SEV_ALLOC_ORDER);
 }
 
+static int test_write(unsigned long vaddr, int npages)
+{
+	unsigned long vaddr_end = vaddr + (npages << PAGE_SHIFT);
+
+	while (vaddr < vaddr_end) {
+		memcpy((void *)vaddr, st1, strnlen(st1, PAGE_SIZE));
+		vaddr += PAGE_SIZE;
+	}
+
+	return 0;
+}
+
+static void test_sev_psc_ghcb_nae(void)
+{
+	report_info("TEST: GHCB Protocol based Page state change test");
+
+	unsigned long vaddr;
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	vaddr = snp_alloc_pages(NUM_SEV_PAGES, SEV_ALLOC_ORDER,
+				RMP_PG_SIZE_2M);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M, true),
+	       "Expected page state: Private");
+
+	sev_set_pages_state(vaddr, NUM_SEV_PAGES, SNP_PAGE_STATE_SHARED, ghcb);
+
+	set_pte_decrypted(vaddr, NUM_SEV_PAGES);
+
+	report(!test_write((unsigned long)vaddr, NUM_SEV_PAGES),
+	       "Write to %d unencrypted pages after private->shared conversion",
+	       NUM_SEV_PAGES);
+
+	snp_free_pages(SEV_ALLOC_ORDER, NUM_SEV_PAGES, vaddr, ghcb);
+}
+
 int main(void)
 {
 	int rtn;
@@ -198,8 +265,10 @@ int main(void)
 	test_sev_snp_activation();
 	test_stringio();
 	setup_vm();
-	if (amd_sev_snp_enabled())
+	if (amd_sev_snp_enabled()) {
 		test_sev_psc_ghcb_msr();
+		test_sev_psc_ghcb_nae();
+	}
 
 	return report_summary();
 }
