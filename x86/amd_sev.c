@@ -286,6 +286,22 @@ static void __test_sev_psc_private(unsigned long vaddr, struct ghcb *ghcb,
 	       "Expected page state: Private");
 }
 
+static void __test_sev_psc_shared(unsigned long vaddr, struct ghcb *ghcb,
+				  int npages)
+{
+	allow_noupdate = true;
+
+	/* Convert the whole 2M range to shared */
+	sev_set_pages_state(vaddr, npages, SNP_PAGE_STATE_SHARED, ghcb);
+
+	set_pte_decrypted(vaddr, npages);
+
+	/* Conduct a write test to ensure pages are in expected state */
+	report(!test_write(vaddr, npages),
+	       "Write to %d unencrypted pages after private->shared conversion",
+	       npages);
+}
+
 static void test_sev_psc_intermix(bool is_private)
 {
 	unsigned long vaddr;
@@ -312,6 +328,8 @@ static void test_sev_psc_intermix(bool is_private)
 	/* Now convert all the pages back to private */
 	if (is_private)
 		__test_sev_psc_private(vaddr, ghcb, NUM_SEV_PAGES);
+	else
+		__test_sev_psc_shared(vaddr, ghcb, NUM_SEV_PAGES);
 
 	/* Free up all the used pages */
 	snp_free_pages(SEV_ALLOC_ORDER, NUM_SEV_PAGES, vaddr, ghcb);
@@ -321,6 +339,12 @@ static void test_sev_psc_mix_to_pvt(void)
 {
 	report_info("TEST: 2M Intermixed to Private PSC test");
 	test_sev_psc_intermix(true);
+}
+
+static void test_sev_psc_mix_to_shared(void)
+{
+	report_info("TEST: 2M Intermixed to Shared PSC test");
+	test_sev_psc_intermix(false);
 }
 
 int main(void)
@@ -336,6 +360,7 @@ int main(void)
 		test_sev_psc_ghcb_msr();
 		test_sev_psc_ghcb_nae();
 		test_sev_psc_mix_to_pvt();
+		test_sev_psc_mix_to_shared();
 	}
 
 	return report_summary();
