@@ -272,6 +272,57 @@ static void test_sev_psc_ghcb_nae(void)
 	snp_free_pages(SEV_ALLOC_ORDER, NUM_SEV_PAGES, vaddr, ghcb);
 }
 
+static void __test_sev_psc_private(unsigned long vaddr, struct ghcb *ghcb,
+				   int npages)
+{
+	allow_noupdate = true;
+
+	set_pte_encrypted(vaddr, npages);
+
+	/* Convert the whole 2M range back to private */
+	sev_set_pages_state(vaddr, NUM_SEV_PAGES, SNP_PAGE_STATE_PRIVATE, ghcb);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M, true),
+	       "Expected page state: Private");
+}
+
+static void test_sev_psc_intermix(bool is_private)
+{
+	unsigned long vaddr;
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	vaddr = snp_alloc_pages(NUM_SEV_PAGES, SEV_ALLOC_ORDER,
+				RMP_PG_SIZE_2M);
+
+	/* Ensure pages are in private state by checking 1st page is private */
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M, true),
+	       "Expected page state: Private");
+
+	sev_set_pages_state(vaddr, NUM_SEV_PAGES, SNP_PAGE_STATE_SHARED, ghcb);
+
+	set_pte_decrypted(vaddr, NUM_SEV_PAGES);
+
+	/* Convert a bunch of sub-pages to private and leave the rest in shared */
+	set_pte_encrypted(vaddr, NUM_SEV_PAGES);
+	sev_set_pages_state(vaddr, 256, SNP_PAGE_STATE_PRIVATE, ghcb);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_4K, true),
+	       "Expected page state: Private");
+
+	/* Now convert all the pages back to private */
+	if (is_private)
+		__test_sev_psc_private(vaddr, ghcb, NUM_SEV_PAGES);
+
+	/* Free up all the used pages */
+	snp_free_pages(SEV_ALLOC_ORDER, NUM_SEV_PAGES, vaddr, ghcb);
+}
+
+static void test_sev_psc_mix_to_pvt(void)
+{
+	report_info("TEST: 2M Intermixed to Private PSC test");
+	test_sev_psc_intermix(true);
+}
+
 int main(void)
 {
 	int rtn;
@@ -284,6 +335,7 @@ int main(void)
 	if (amd_sev_snp_enabled()) {
 		test_sev_psc_ghcb_msr();
 		test_sev_psc_ghcb_nae();
+		test_sev_psc_mix_to_pvt();
 	}
 
 	return report_summary();
