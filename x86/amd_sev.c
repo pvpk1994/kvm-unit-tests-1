@@ -290,6 +290,59 @@ static void test_sev_psc_ghcb_nae(void)
 	snp_free_pages(SEV_ALLOC_ORDER, SEV_ALLOC_PAGE_COUNT, vaddr, ghcb, true);
 }
 
+static void __test_sev_psc_private(unsigned long vaddr, struct ghcb *ghcb,
+				   int npages, bool allow_noupdate)
+{
+	set_pte_encrypted(vaddr, npages);
+
+	/* Convert the whole 2M range back to private */
+	sev_set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE, ghcb,
+			    allow_noupdate);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M),
+	       "Expected page state: Private");
+}
+
+static void test_sev_psc_intermix(bool to_private)
+{
+	unsigned long vaddr;
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	/* Allocate a 2M private page */
+	vaddr = (unsigned long)vmalloc_pages((SEV_ALLOC_PAGE_COUNT) / 2,
+					     SEV_ALLOC_ORDER - 1, RMP_PG_SIZE_2M);
+
+	/* Ensure pages are in private state by checking the page is private */
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M),
+	       "Expected page state: Private");
+
+	sev_set_pages_state(vaddr, (SEV_ALLOC_PAGE_COUNT) / 2,
+			    SNP_PAGE_STATE_SHARED, ghcb, false);
+
+	set_pte_decrypted(vaddr, (SEV_ALLOC_PAGE_COUNT) / 2);
+
+	set_pte_encrypted(vaddr, (SEV_ALLOC_PAGE_COUNT) / 2);
+	/* Convert a bunch of sub-pages (256) to private and leave the rest shared */
+	sev_set_pages_state(vaddr, 256, SNP_PAGE_STATE_PRIVATE, ghcb, false);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_4K),
+	       "Expected page state: Private");
+
+	/* Now convert all the pages back to private */
+	if (to_private)
+		__test_sev_psc_private(vaddr, ghcb, (SEV_ALLOC_PAGE_COUNT) / 2, true);
+
+	/* Free up all the used pages */
+	snp_free_pages(SEV_ALLOC_ORDER - 1, (SEV_ALLOC_PAGE_COUNT) / 2,
+		       vaddr, ghcb, true);
+}
+
+static void test_sev_psc_intermix_to_private(void)
+{
+	report_info("TEST: 2M Intermixed to Private PSC test");
+	test_sev_psc_intermix(true);
+}
+
 int main(void)
 {
 	int rtn;
@@ -309,6 +362,7 @@ int main(void)
 		init_vpages();
 		test_sev_psc_ghcb_msr();
 		test_sev_psc_ghcb_nae();
+		test_sev_psc_intermix_to_private();
 	}
 
 	return report_summary();
