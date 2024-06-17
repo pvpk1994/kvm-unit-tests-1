@@ -17,7 +17,7 @@
 
 static unsigned short amd_sev_c_bit_pos;
 phys_addr_t ghcb_addr;
-extern bool large_entry;
+extern bool large_entry, allow_noupdate;
 
 bool amd_sev_enabled(void)
 {
@@ -382,6 +382,18 @@ efi_status_t __sev_set_pages_state_msr_proto(unsigned long vaddr, int npages,
 	return ES_OK;
 }
 
+static bool pvalidate_check(int result)
+{
+	if (!allow_noupdate && result)
+		return true;
+
+	else if (allow_noupdate &&
+		 (result && result != PVALIDATE_FAIL_NOUPDATE))
+		return true;
+
+	return false;
+}
+
 static void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr)
 {
 	struct psc_entry *entry;
@@ -402,11 +414,11 @@ static void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr)
 			for (; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
 				pvalidate_result = pvalidate(vaddr, RMP_PG_SIZE_4K,
 							     validate);
-				if (pvalidate_result)
+				if (pvalidate_check(pvalidate_result))
 					break;
 			}
 		}
-		assert(!pvalidate_result);
+		assert(!pvalidate_check(pvalidate_result));
 	}
 }
 

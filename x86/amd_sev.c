@@ -24,7 +24,7 @@
 #define TESTDEV_IO_PORT 0xe0
 
 static char st1[] = "abcdefghijklmnop";
-bool large_entry;
+bool large_entry, allow_noupdate;
 
 static int test_sev_activation(void)
 {
@@ -190,6 +190,12 @@ static void snp_free_pages(int order, int npages, unsigned long vaddr,
 
 	/* Free all the associated physical pages */
 	free_pages_by_order((void *)va_to_pa(vaddr), order);
+
+	/* unset large_entry (if set) */
+	large_entry = false;
+
+	/* unset allow_noupdate */
+	allow_noupdate = false;
 }
 
 static void test_sev_psc_ghcb_msr(void)
@@ -252,6 +258,16 @@ static void test_sev_psc_ghcb_nae(void)
 	report(!test_write((unsigned long)vaddr, NUM_SEV_PAGES),
 	       "Write to %d unencrypted pages after private->shared conversion",
 	       NUM_SEV_PAGES);
+
+	/* Convert pages from shared->private */
+	set_pte_encrypted(vaddr, NUM_SEV_PAGES);
+
+	sev_set_pages_state(vaddr, NUM_SEV_PAGES, SNP_PAGE_STATE_PRIVATE, ghcb);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M, true),
+	       "Expected page state: Private");
+
+	allow_noupdate = true;
 
 	snp_free_pages(SEV_ALLOC_ORDER, NUM_SEV_PAGES, vaddr, ghcb);
 }
