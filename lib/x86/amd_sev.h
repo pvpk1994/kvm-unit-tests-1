@@ -240,6 +240,10 @@ unsigned long __sev_set_pages_state(struct snp_psc_desc *desc, unsigned long vad
 				    struct ghcb *ghcb);
 unsigned long snp_alloc_pages(int num_pages, int order, bool size);
 void vc_ghcb_invalidate(struct ghcb *ghcb);
+void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr);
+int vmgexit_psc(struct snp_psc_desc *desc, struct ghcb *ghcb);
+void add_psc_entry(struct snp_psc_desc *desc, u8 idx, u8 op,
+		   unsigned long vaddr, bool large_entry, u16 offset);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);

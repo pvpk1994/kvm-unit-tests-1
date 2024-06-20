@@ -347,6 +347,57 @@ static void test_sev_psc_mix_to_shared(void)
 	test_sev_psc_intermix(false);
 }
 
+static void test_sev_snp_smash(void)
+{
+	report_info("TEST: PSMASH and UNSMASH operations on 2M range");
+
+	int ret;
+	unsigned long vaddr, vaddr_arr[3];
+	struct snp_psc_desc desc = {0};
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	/*
+	 * Allocate 2 2M-aligned large pages. Do not use
+	 * SEV_ALLOC_ORDER/NUM_SEV_PAGES as any changes to these
+	 * variables might end up blowing this test that deals with
+	 * individual add_psc_entry()'s.
+	 */
+	vaddr = snp_alloc_pages(1 << 10, 10, RMP_PG_SIZE_2M);
+
+	/*
+	 * Create a PSC request where:
+	 * - First entry requests HV to UNSMASH 1st 2M range.
+	 * - Second entry requests HV to SMASH 2nd 2M range.
+	 * - Second entry again requests HV to UNSMASH 2nd 2M range.
+	 */
+	vaddr_arr[0] = vaddr;
+	add_psc_entry(&desc, 0, SNP_PAGE_STATE_UNSMASH, vaddr_arr[0],
+		      true, 0);
+	vaddr_arr[1] = vaddr + LARGE_PAGE_SIZE;
+	add_psc_entry(&desc, 1, SNP_PAGE_STATE_PSMASH, vaddr_arr[1],
+		      true, 0);
+	vaddr_arr[2] = vaddr_arr[1];
+	add_psc_entry(&desc, 2, SNP_PAGE_STATE_UNSMASH, vaddr_arr[2],
+		      true, 0);
+
+	ret = vmgexit_psc(&desc, ghcb);
+
+	assert_msg(!ret, "VMGEXIT failed with ret value: %d", ret);
+
+	/*
+	 * Ensure the page states are still private after
+	 * requesting PSMASH/UNSMASH operation.
+	 */
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M, true),
+	       "Expected page state: Private");
+
+	allow_noupdate = true;
+	pvalidate_pages(&desc, vaddr_arr);
+
+	/* Free up all the used pages */
+	snp_free_pages(10, 1 << 10, vaddr, ghcb);
+}
+
 int main(void)
 {
 	int rtn;
@@ -361,6 +412,7 @@ int main(void)
 		test_sev_psc_ghcb_nae();
 		test_sev_psc_mix_to_pvt();
 		test_sev_psc_mix_to_shared();
+		test_sev_snp_smash();
 	}
 
 	return report_summary();
