@@ -355,8 +355,8 @@ static bool pvalidate_failed(int result, bool allow_noupdate)
 	return false;
 }
 
-static void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr,
-			    bool allow_noupdate)
+void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr,
+		     bool allow_noupdate)
 {
 	struct psc_entry *entry;
 	int ret, i;
@@ -403,7 +403,7 @@ static int sev_ghcb_hv_call(struct ghcb *ghcb, u64 exit_code,
 	return verify_exception(ghcb);
 }
 
-static int vmgexit_psc(struct snp_psc_desc *desc, struct ghcb *ghcb)
+int vmgexit_psc(struct snp_psc_desc *desc, struct ghcb *ghcb)
 {
 	int cur_entry, end_entry, ret = 0;
 	struct snp_psc_desc *data;
@@ -457,8 +457,8 @@ static int vmgexit_psc(struct snp_psc_desc *desc, struct ghcb *ghcb)
 	return ret;
 }
 
-static void add_psc_entry(struct snp_psc_desc *desc, u8 idx, u8 op, unsigned long vaddr,
-			  bool large_entry, u16 cur_page_offset)
+void add_psc_entry(struct snp_psc_desc *desc, u8 idx, u8 op, unsigned long vaddr,
+		   bool large_entry, u16 cur_page_offset)
 {
 	struct psc_hdr *hdr = &desc->hdr;
 	struct psc_entry *entry = &desc->entries[idx];

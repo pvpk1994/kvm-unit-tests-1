@@ -366,6 +366,71 @@ static void test_sev_psc_intermix_to_shared(void)
 	test_sev_psc_intermix(false);
 }
 
+static void test_sev_snp_psmash(void)
+{
+	int ret;
+	unsigned long vaddr, vaddr_arr[3];
+	struct snp_psc_desc desc = {0};
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+
+	report_info("TEST: PSMASH and UNSMASH operations on 2M range");
+
+	vaddr = (unsigned long)vmalloc_pages(SEV_ALLOC_PAGE_COUNT,
+					     SEV_ALLOC_ORDER, RMP_PG_SIZE_2M);
+
+	/*
+	 * Create a PSC request for first PSC entry where:
+	 * - guest issues an UNSMASH on a 2M private range.
+	 * Hypervisor treats an UNSMASH hint from guest as a nop.
+	 * So it is expected that the state of pages after conversion to
+	 * be in the same state as before.
+	 */
+	vaddr_arr[0] = vaddr;
+	add_psc_entry(&desc, 0, SNP_PAGE_STATE_UNSMASH, vaddr_arr[0],
+		      true, 0);
+
+	/*
+	 * Create a PSC request for second PSC entry where:
+	 * - guest issues a PSMASH on the next 2M private range.
+	 * Hypervisor should also treat PSMASH hint from guest as a nop.
+	 */
+	vaddr_arr[1] = vaddr + LARGE_PAGE_SIZE;
+	add_psc_entry(&desc, 1, SNP_PAGE_STATE_PSMASH, vaddr_arr[1],
+		      true, 0);
+
+	/*
+	 * For 3rd PSC entry:
+	 * Perform an UNSMASH on the PSMASH'd entry where:
+	 * - guest now issues an UNSMASH on a 2M private PSMASH'd entry,
+	 * but since a PSMASH/UNSMASH are noops, states of these pages
+	 * should be in their original (private) states.
+	 */
+	vaddr_arr[2] = vaddr_arr[1];
+	add_psc_entry(&desc, 2, SNP_PAGE_STATE_UNSMASH, vaddr_arr[2],
+		      true, 0);
+
+	ret = vmgexit_psc(&desc, ghcb);
+
+	assert_msg(!ret, "VMGEXIT failed with ret value: %d", ret);
+
+	/*
+	 * Ensure the page states are still in the original (private)
+	 * state after hypervisor handled PSMASH/UNSMASH operations.
+	 */
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M),
+	       "Expected page state: Private");
+
+	report(is_validated_private_page(vaddr + LARGE_PAGE_SIZE,
+					 RMP_PG_SIZE_2M),
+	       "Expected page state: Private");
+
+	pvalidate_pages(&desc, vaddr_arr, true);
+
+	/* Free up all the used pages */
+	snp_free_pages(SEV_ALLOC_ORDER, SEV_ALLOC_PAGE_COUNT, vaddr,
+		       ghcb, true);
+}
+
 int main(void)
 {
 	int rtn;
@@ -387,6 +452,7 @@ int main(void)
 		test_sev_psc_ghcb_nae();
 		test_sev_psc_intermix_to_private();
 		test_sev_psc_intermix_to_shared();
+		test_sev_snp_psmash();
 	}
 
 	return report_summary();
