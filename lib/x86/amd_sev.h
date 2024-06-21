@@ -94,6 +94,9 @@ struct ghcb {
 #define RMP_PG_SIZE_4K		0
 #define RMP_PG_SIZE_2M		1
 
+/* Current page offsets for 2M ranges */
+#define RANDOM_CUR_PAGE_OFFSET_2M	256
+
 enum es_result {
 	ES_OK,			/* All good */
 	ES_UNSUPPORTED,		/* Requested operation not supported */

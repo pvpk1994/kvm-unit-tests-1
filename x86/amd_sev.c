@@ -24,7 +24,7 @@
 #define TESTDEV_IO_PORT 0xe0
 
 static char st1[] = "abcdefghijklmnop";
-bool large_entry, allow_noupdate;
+bool large_entry, allow_noupdate, inject_cur_page;
 
 static int test_sev_activation(void)
 {
@@ -196,6 +196,9 @@ static void snp_free_pages(int order, int npages, unsigned long vaddr,
 
 	/* unset allow_noupdate */
 	allow_noupdate = false;
+
+	/* unset current page's offset */
+	inject_cur_page = false;
 }
 
 static void test_sev_psc_ghcb_msr(void)
@@ -398,6 +401,52 @@ static void test_sev_snp_smash(void)
 	snp_free_pages(10, 1 << 10, vaddr, ghcb);
 }
 
+static void test_sev_snp_page_offset(void)
+{
+	report_info("TEST: Injecting random current page offset");
+
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+	struct snp_psc_desc desc = {0};
+	unsigned long vaddr, vaddr2;
+	int ret, iter, res;
+
+	inject_cur_page = true;
+
+	/* Allocate 2 large pages */
+	vaddr = snp_alloc_pages(1 << 10, 10, RMP_PG_SIZE_2M);
+	vaddr2 = vaddr + LARGE_PAGE_SIZE;
+
+	unsigned long vaddr_arr[2] = {vaddr, vaddr2};
+
+	/*
+	 * Create a PSC request where:
+	 * - 2 2M large pages that submit a different PSC operation.
+	 * - Both these entries have a different random cur_page offset.
+	 */
+	add_psc_entry(&desc, 0, SNP_PAGE_STATE_SHARED, vaddr, true,
+		      inject_cur_page ? RANDOM_CUR_PAGE_OFFSET_2M : 0);
+	add_psc_entry(&desc, 1, SNP_PAGE_STATE_PRIVATE, vaddr2, true,
+		      inject_cur_page ? RANDOM_CUR_PAGE_OFFSET_2M + 1 : 0);
+
+	ret = vmgexit_psc(&desc, ghcb);
+	assert_msg(!ret, "VMGEXIT failed with ret value: %d", ret);
+
+	allow_noupdate = true;
+	pvalidate_pages(&desc, vaddr_arr);
+
+	/* Check if hypervisor has handled cur_page offset well */
+	for (iter = 0; iter <= 1; iter++) {
+		res = desc.entries[iter].cur_page == 512 ? true : false;
+		if (!res)
+			break;
+	}
+
+	report(res, "Handling random current page offset");
+
+	/* Free up the used pages */
+	snp_free_pages(10, 1 << 10, vaddr, ghcb);
+}
+
 int main(void)
 {
 	int rtn;
@@ -413,6 +462,7 @@ int main(void)
 		test_sev_psc_mix_to_pvt();
 		test_sev_psc_mix_to_shared();
 		test_sev_snp_smash();
+		test_sev_snp_page_offset();
 	}
 
 	return report_summary();
