@@ -431,6 +431,63 @@ static void test_sev_snp_psmash(void)
 		       ghcb, true);
 }
 
+static void __test_sev_snp_page_offset(int cur_page_offset)
+{
+	struct ghcb *ghcb = (struct ghcb *)(rdmsr(SEV_ES_GHCB_MSR_INDEX));
+	struct snp_psc_desc desc = {0};
+	unsigned long vaddr, vaddr_start;
+	int ret, iter;
+
+	/* Allocate a 2M large page */
+	vaddr = (unsigned long)vmalloc_pages((SEV_ALLOC_PAGE_COUNT) / 2,
+					     SEV_ALLOC_ORDER - 1,
+					     RMP_PG_SIZE_2M);
+	/*
+	 * Create a PSC private->shared request where a non-zero
+	 * cur_page offset is set to examine how hypervisor handles such
+	 * requests.
+	 */
+	add_psc_entry(&desc, 0, SNP_PAGE_STATE_SHARED, vaddr, true,
+		      cur_page_offset);
+
+	ret = vmgexit_psc(&desc, ghcb);
+	assert_msg(!ret, "VMGEXIT failed with ret value: %d", ret);
+
+	/*
+	 * Conduct a re-validation test to examine if the pages within 1
+	 * to cur_page offset are still in their expected private state.
+	 */
+	vaddr_start = vaddr;
+	for (iter = 0; iter < cur_page_offset; iter++) {
+		ret = is_validated_private_page(vaddr_start, RMP_PG_SIZE_4K);
+		assert_msg(ret, "Page not in expected private state");
+		vaddr_start += PAGE_SIZE;
+	}
+
+	pvalidate_pages(&desc, &vaddr, true);
+
+	/* Free up the used pages */
+	snp_free_pages(SEV_ALLOC_ORDER - 1, (SEV_ALLOC_PAGE_COUNT) / 2,
+		       vaddr, ghcb, true);
+}
+
+static void test_sev_snp_page_offset(void)
+{
+	int iter;
+	/*
+	 * Set a pool of current page offsets such that all
+	 * possible edge-cases are covered in order to examine
+	 * how hypervisor handles PSC requests with non-zero cur_page
+	 * offsets.
+	 */
+	int cur_page_offsets[] = {0, 1, 256, 511, 512};
+
+	report_info("TEST: Injecting non-zero current page offsets");
+
+	for (iter = 0; iter < ARRAY_SIZE(cur_page_offsets); iter++)
+		__test_sev_snp_page_offset(cur_page_offsets[iter]);
+}
+
 int main(void)
 {
 	int rtn;
@@ -453,6 +510,7 @@ int main(void)
 		test_sev_psc_intermix_to_private();
 		test_sev_psc_intermix_to_shared();
 		test_sev_snp_psmash();
+		test_sev_snp_page_offset();
 	}
 
 	return report_summary();
