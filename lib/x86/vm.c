@@ -370,3 +370,29 @@ unsigned long pgtable_va_to_pa(unsigned long va)
 
 	__builtin_unreachable();
 }
+
+void *vmalloc_pages(int num_pages, int order, bool large_page)
+{
+	unsigned long length = num_pages * PAGE_SIZE;
+	pgd_t *cr3 = (pgd_t *)read_cr3();
+	void *vaddr, *paddr;
+
+	/* Allocate physical pages */
+	paddr = alloc_pages(order);
+	assert(paddr);
+
+	/* Allocate virtual pages */
+	vaddr = alloc_vpages_aligned(num_pages, large_page ? ORDER_2M : ORDER_4K);
+	assert(vaddr);
+
+	/*
+	 * Create pagetable entries that map the newly assigned virtual
+	 * pages to physical pages
+	 */
+	if (!large_page)
+		install_pages(cr3, __pa(paddr), length, vaddr);
+	else
+		install_large_pages(cr3, __pa(paddr), length, vaddr);
+
+	return vaddr;
+}

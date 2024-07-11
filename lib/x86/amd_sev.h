@@ -208,6 +208,29 @@ enum psc_op {
 	/* GHCBData[63:32] */					\
 	(((u64)(val) & GENMASK_ULL(63, 32)) >> 32)
 
+struct psc_hdr {
+	u16 cur_entry;
+	u16 end_entry;
+	u32 reserved;
+};
+
+struct psc_entry {
+	u64 cur_page	: 12,
+	    gfn		: 40,
+	    operation	: 4,
+	    pagesize	: 1,
+	    reserved	: 7;
+};
+
+#define VMGEXIT_PSC_MAX_ENTRY					\
+	((GHCB_SHARED_BUF_SIZE - sizeof(struct psc_hdr)) /	\
+	 sizeof(struct psc_entry))
+
+struct snp_psc_desc {
+	struct psc_hdr hdr;
+	struct psc_entry entries[VMGEXIT_PSC_MAX_ENTRY];
+};
+
 bool amd_sev_es_enabled(void);
 efi_status_t setup_vc_handler(void);
 bool amd_sev_snp_enabled(void);
@@ -219,6 +242,10 @@ void set_pte_encrypted(unsigned long vaddr, int npages);
 bool is_validated_private_page(unsigned long vaddr, bool rmp_size);
 enum es_result  __sev_set_pages_state_msr_proto(unsigned long vaddr,
 					        int npages, int operation);
+unsigned long __sev_set_pages_state(struct snp_psc_desc *desc, unsigned long vaddr,
+				    unsigned long vaddr_end, int op,
+				    struct ghcb *ghcb, bool large_entry);
+void vc_ghcb_invalidate(struct ghcb *ghcb);
 
 unsigned long long get_amd_sev_c_bit_mask(void);
 unsigned long long get_amd_sev_addr_upperbound(void);

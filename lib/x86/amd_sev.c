@@ -346,3 +346,171 @@ enum es_result __sev_set_pages_state_msr_proto(unsigned long vaddr, int npages,
 
 	return ES_OK;
 }
+
+static void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr)
+{
+	struct psc_entry *entry;
+	int ret, i;
+	unsigned long vaddr;
+	bool validate;
+
+	for (i = 0; i <= desc->hdr.end_entry; i++) {
+		vaddr = vaddr_arr[i];
+		entry = &desc->entries[i];
+		validate = entry->operation == SNP_PAGE_STATE_PRIVATE ? true : false;
+
+		ret = pvalidate(vaddr, entry->pagesize, validate);
+		if (ret == PVALIDATE_FAIL_SIZEMISMATCH) {
+			assert(entry->pagesize == RMP_PG_SIZE_2M);
+			unsigned long vaddr_end = vaddr + LARGE_PAGE_SIZE;
+
+			for (; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
+				ret = pvalidate(vaddr, RMP_PG_SIZE_4K, validate);
+				if (ret)
+					break;
+			}
+		}
+		assert(!ret);
+	}
+}
+
+static int verify_exception(struct ghcb *ghcb)
+{
+	return ghcb->save.sw_exit_info_1 & GENMASK_ULL(31, 0);
+}
+
+static int sev_ghcb_hv_call(struct ghcb *ghcb, u64 exit_code,
+			    u64 exit_info_1, u64 exit_info_2)
+{
+	ghcb->version = GHCB_PROTOCOL_MAX;
+	ghcb->ghcb_usage = GHCB_DEFAULT_USAGE;
+
+	ghcb_set_sw_exit_code(ghcb, exit_code);
+	ghcb_set_sw_exit_info_1(ghcb, exit_info_1);
+	ghcb_set_sw_exit_info_2(ghcb, exit_info_2);
+
+	VMGEXIT();
+
+	return verify_exception(ghcb);
+}
+
+static int vmgexit_psc(struct snp_psc_desc *desc, struct ghcb *ghcb)
+{
+	int cur_entry, end_entry, ret = 0;
+	struct snp_psc_desc *data;
+
+	/* Ensure end_entry is within bounds */
+	assert(desc->hdr.end_entry < VMGEXIT_PSC_MAX_ENTRY);
+
+	vc_ghcb_invalidate(ghcb);
+
+	data = (struct snp_psc_desc *)ghcb->shared_buffer;
+	memcpy(ghcb->shared_buffer, desc, GHCB_SHARED_BUF_SIZE);
+
+	cur_entry = data->hdr.cur_entry;
+	end_entry = data->hdr.end_entry;
+
+	while (data->hdr.cur_entry <= data->hdr.end_entry) {
+		ghcb_set_sw_scratch(ghcb, (u64)__pa(data));
+
+		ret = sev_ghcb_hv_call(ghcb, SVM_VMGEXIT_PSC, 0, 0);
+
+		if (ret) {
+			report_info("SNP: PSC failed with ret: %d\n", ret);
+			ret = 1;
+			break;
+		}
+
+		if (cur_entry > data->hdr.cur_entry) {
+			report_info("SNP: PSC processing going backward, cur_entry %d (got %d)\n",
+				    cur_entry, data->hdr.cur_entry);
+			ret = 1;
+			break;
+		}
+
+		if (data->hdr.end_entry != end_entry) {
+			report_info("End entry mismatch: end_entry %d (got %d)\n",
+				    end_entry, data->hdr.end_entry);
+			ret = 1;
+			break;
+		}
+
+		if (data->hdr.reserved) {
+			report_info("Reserved bit is set in the PSC header\n");
+			ret = 1;
+			break;
+		}
+	}
+
+	/* Copy the output in shared buffer back to desc */
+	memcpy(desc, ghcb->shared_buffer, GHCB_SHARED_BUF_SIZE);
+
+	return ret;
+}
+
+static void add_psc_entry(struct snp_psc_desc *desc, u8 idx, u8 op, unsigned long vaddr,
+			  bool large_entry, u16 cur_page_offset)
+{
+	struct psc_hdr *hdr = &desc->hdr;
+	struct psc_entry *entry = &desc->entries[idx];
+
+	assert_msg(!large_entry || IS_ALIGNED(vaddr, LARGE_PAGE_SIZE),
+		   "Must use 2M-aligned addresses for large PSC entries");
+
+	entry->gfn = pgtable_va_to_pa(vaddr) >> PAGE_SHIFT;
+	entry->operation = op;
+	entry->pagesize = large_entry;
+	entry->cur_page = cur_page_offset;
+	hdr->end_entry = idx;
+}
+
+unsigned long __sev_set_pages_state(struct snp_psc_desc *desc, unsigned long vaddr,
+				    unsigned long vaddr_end, int op,
+				    struct ghcb *ghcb, bool large_entry)
+{
+	unsigned long vaddr_arr[VMGEXIT_PSC_MAX_ENTRY];
+	int ret, iter = 0, iter2 = 0;
+	u8 page_size;
+
+	memset(desc, 0, sizeof(*desc));
+
+	report_info("%s: address start %lx end %lx op %d large %d",
+		    __func__, vaddr, vaddr_end, op, large_entry);
+
+	while (vaddr < vaddr_end && iter < ARRAY_SIZE(desc->entries)) {
+		vaddr_arr[iter] = vaddr;
+
+		if (large_entry && IS_ALIGNED(vaddr, LARGE_PAGE_SIZE) &&
+		    (vaddr_end - vaddr) >= LARGE_PAGE_SIZE) {
+			add_psc_entry(desc, iter, op, vaddr, true, 0);
+			vaddr += LARGE_PAGE_SIZE;
+		} else {
+			add_psc_entry(desc, iter, op, vaddr, false, 0);
+			vaddr += PAGE_SIZE;
+		}
+
+		iter++;
+	}
+
+	if (op == SNP_PAGE_STATE_SHARED)
+		pvalidate_pages(desc, vaddr_arr);
+
+	ret = vmgexit_psc(desc, ghcb);
+	assert_msg(!ret, "VMGEXIT failed with ret value: %d", ret);
+
+	if (op == SNP_PAGE_STATE_PRIVATE)
+		pvalidate_pages(desc, vaddr_arr);
+
+	for (iter2 = 0; iter2 < iter; iter2++) {
+		page_size = desc->entries[iter2].pagesize;
+
+		if (page_size == RMP_PG_SIZE_2M)
+			assert_msg(desc->entries[iter2].cur_page == 512,
+				   "Failed to process sub-entries within 2M range");
+		else if (page_size == RMP_PG_SIZE_4K)
+			assert_msg(desc->entries[iter2].cur_page == 1,
+				   "Failed to process 4K entry");
+	}
+
+	return vaddr;
+}

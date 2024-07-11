@@ -173,6 +173,37 @@ static int test_write(unsigned long vaddr, int npages)
 	return 0;
 }
 
+static void sev_set_pages_state(unsigned long vaddr, int npages, int op,
+				struct ghcb *ghcb)
+{
+	struct snp_psc_desc desc;
+	unsigned long vaddr_end;
+	bool large_entry;
+
+	vaddr &= PAGE_MASK;
+	vaddr_end = vaddr + (npages << PAGE_SHIFT);
+
+	if (IS_ALIGNED(vaddr, LARGE_PAGE_SIZE))
+		large_entry = true;
+
+	while (vaddr < vaddr_end) {
+		vaddr = __sev_set_pages_state(&desc, vaddr, vaddr_end,
+					      op, ghcb, large_entry);
+	}
+}
+
+static void snp_free_pages(int order, int npages, unsigned long vaddr,
+			   struct ghcb *ghcb)
+{
+	set_pte_encrypted(vaddr, SEV_ALLOC_PAGE_COUNT);
+
+	/* Convert pages back to default guest-owned state */
+	sev_set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE, ghcb);
+
+	/* Free all the associated physical pages */
+	free_pages_by_order((void *)pgtable_va_to_pa(vaddr), order);
+}
+
 static void test_sev_psc_ghcb_msr(void)
 {
 	void *vaddr;
@@ -210,6 +241,44 @@ static void test_sev_psc_ghcb_msr(void)
 	free_pages_by_order(vaddr, SEV_ALLOC_ORDER);
 }
 
+static void init_vpages(void)
+{
+	/*
+	 * alloc_vpages_aligned() allocates contiguous virtual
+	 * pages that grow downward from vfree_top, 0, and this is
+	 * problematic for SNP related PSC tests because
+	 * vaddr < vaddr_end using unsigned values causes an issue
+	 * (vaddr_end is 0x0). To avoid this, allocate a dummy virtual
+	 * page.
+	 */
+	alloc_vpages_aligned(1, 0);
+}
+
+static void test_sev_psc_ghcb_nae(void)
+{
+	unsigned long vaddr;
+	struct ghcb *ghcb = (struct ghcb *)rdmsr(SEV_ES_GHCB_MSR_INDEX);
+
+	report_info("TEST: GHCB Protocol based page state change test");
+
+	vaddr = (unsigned long)vmalloc_pages(SEV_ALLOC_PAGE_COUNT,
+					     SEV_ALLOC_ORDER, RMP_PG_SIZE_2M);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M),
+	       "Expected page state: Private");
+
+	sev_set_pages_state(vaddr, SEV_ALLOC_PAGE_COUNT, SNP_PAGE_STATE_SHARED,
+			    ghcb);
+
+	set_pte_decrypted(vaddr, SEV_ALLOC_PAGE_COUNT);
+
+	report(!test_write((unsigned long)vaddr, SEV_ALLOC_PAGE_COUNT),
+	       "Write to %d unencrypted 2M pages after private->shared conversion",
+	       (SEV_ALLOC_PAGE_COUNT) / (1 << ORDER_2M));
+
+	snp_free_pages(SEV_ALLOC_ORDER, SEV_ALLOC_PAGE_COUNT, vaddr, ghcb);
+}
+
 int main(void)
 {
 	int rtn;
@@ -221,8 +290,15 @@ int main(void)
 
 	/* Setup a new page table via setup_vm() */
 	setup_vm();
-	if (amd_sev_snp_enabled())
+	if (amd_sev_snp_enabled()) {
+		/*
+		 * call init_vpages() before running any of SEV-SNP
+		 * related PSC tests.
+		 */
+		init_vpages();
 		test_sev_psc_ghcb_msr();
+		test_sev_psc_ghcb_nae();
+	}
 
 	return report_summary();
 }
