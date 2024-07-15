@@ -174,7 +174,7 @@ static int test_write(unsigned long vaddr, int npages)
 }
 
 static void sev_set_pages_state(unsigned long vaddr, int npages, int op,
-				struct ghcb *ghcb)
+				struct ghcb *ghcb, bool allow_noupdate)
 {
 	struct snp_psc_desc desc;
 	unsigned long vaddr_end;
@@ -188,17 +188,19 @@ static void sev_set_pages_state(unsigned long vaddr, int npages, int op,
 
 	while (vaddr < vaddr_end) {
 		vaddr = __sev_set_pages_state(&desc, vaddr, vaddr_end,
-					      op, ghcb, large_entry);
+					      op, ghcb, large_entry,
+					      allow_noupdate);
 	}
 }
 
 static void snp_free_pages(int order, int npages, unsigned long vaddr,
-			   struct ghcb *ghcb)
+			   struct ghcb *ghcb, bool allow_noupdate)
 {
 	set_pte_encrypted(vaddr, SEV_ALLOC_PAGE_COUNT);
 
 	/* Convert pages back to default guest-owned state */
-	sev_set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE, ghcb);
+	sev_set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE, ghcb,
+			    allow_noupdate);
 
 	/* Free all the associated physical pages */
 	free_pages_by_order((void *)pgtable_va_to_pa(vaddr), order);
@@ -268,7 +270,7 @@ static void test_sev_psc_ghcb_nae(void)
 	       "Expected page state: Private");
 
 	sev_set_pages_state(vaddr, SEV_ALLOC_PAGE_COUNT, SNP_PAGE_STATE_SHARED,
-			    ghcb);
+			    ghcb, false);
 
 	set_pte_decrypted(vaddr, SEV_ALLOC_PAGE_COUNT);
 
@@ -276,7 +278,16 @@ static void test_sev_psc_ghcb_nae(void)
 	       "Write to %d unencrypted 2M pages after private->shared conversion",
 	       (SEV_ALLOC_PAGE_COUNT) / (1 << ORDER_2M));
 
-	snp_free_pages(SEV_ALLOC_ORDER, SEV_ALLOC_PAGE_COUNT, vaddr, ghcb);
+	/* Convert pages from shared->private */
+	set_pte_encrypted(vaddr, SEV_ALLOC_PAGE_COUNT);
+
+	sev_set_pages_state(vaddr, SEV_ALLOC_PAGE_COUNT, SNP_PAGE_STATE_PRIVATE,
+			    ghcb, false);
+
+	report(is_validated_private_page(vaddr, RMP_PG_SIZE_2M),
+	       "Expected page state: Private");
+
+	snp_free_pages(SEV_ALLOC_ORDER, SEV_ALLOC_PAGE_COUNT, vaddr, ghcb, true);
 }
 
 int main(void)

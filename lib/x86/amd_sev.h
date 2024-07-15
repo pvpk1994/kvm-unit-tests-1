@@ -244,7 +244,8 @@ enum es_result  __sev_set_pages_state_msr_proto(unsigned long vaddr,
 					        int npages, int operation);
 unsigned long __sev_set_pages_state(struct snp_psc_desc *desc, unsigned long vaddr,
 				    unsigned long vaddr_end, int op,
-				    struct ghcb *ghcb, bool large_entry);
+				    struct ghcb *ghcb, bool large_entry,
+				    bool allow_noupdate);
 void vc_ghcb_invalidate(struct ghcb *ghcb);
 
 unsigned long long get_amd_sev_c_bit_mask(void);

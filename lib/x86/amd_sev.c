@@ -347,7 +347,16 @@ enum es_result __sev_set_pages_state_msr_proto(unsigned long vaddr, int npages,
 	return ES_OK;
 }
 
-static void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr)
+static bool pvalidate_failed(int result, bool allow_noupdate)
+{
+	if (result && (!allow_noupdate || result != PVALIDATE_FAIL_NOUPDATE))
+		return true;
+
+	return false;
+}
+
+static void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr,
+			    bool allow_noupdate)
 {
 	struct psc_entry *entry;
 	int ret, i;
@@ -366,11 +375,11 @@ static void pvalidate_pages(struct snp_psc_desc *desc, unsigned long *vaddr_arr)
 
 			for (; vaddr < vaddr_end; vaddr += PAGE_SIZE) {
 				ret = pvalidate(vaddr, RMP_PG_SIZE_4K, validate);
-				if (ret)
+				if (pvalidate_failed(ret, allow_noupdate))
 					break;
 			}
 		}
-		assert(!ret);
+		assert(!pvalidate_failed(ret, allow_noupdate));
 	}
 }
 
@@ -466,7 +475,8 @@ static void add_psc_entry(struct snp_psc_desc *desc, u8 idx, u8 op, unsigned lon
 
 unsigned long __sev_set_pages_state(struct snp_psc_desc *desc, unsigned long vaddr,
 				    unsigned long vaddr_end, int op,
-				    struct ghcb *ghcb, bool large_entry)
+				    struct ghcb *ghcb, bool large_entry,
+				    bool allow_noupdate)
 {
 	unsigned long vaddr_arr[VMGEXIT_PSC_MAX_ENTRY];
 	int ret, iter = 0, iter2 = 0;
@@ -493,13 +503,13 @@ unsigned long __sev_set_pages_state(struct snp_psc_desc *desc, unsigned long vad
 	}
 
 	if (op == SNP_PAGE_STATE_SHARED)
-		pvalidate_pages(desc, vaddr_arr);
+		pvalidate_pages(desc, vaddr_arr, allow_noupdate);
 
 	ret = vmgexit_psc(desc, ghcb);
 	assert_msg(!ret, "VMGEXIT failed with ret value: %d", ret);
 
 	if (op == SNP_PAGE_STATE_PRIVATE)
-		pvalidate_pages(desc, vaddr_arr);
+		pvalidate_pages(desc, vaddr_arr, allow_noupdate);
 
 	for (iter2 = 0; iter2 < iter; iter2++) {
 		page_size = desc->entries[iter2].pagesize;
